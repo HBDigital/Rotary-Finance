@@ -5,7 +5,7 @@ require('dotenv').config();
 const financeRoutes = require('./routes/financeRoutes');
 
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3004;
 
 // Middleware
 app.use(cors());
@@ -16,6 +16,20 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
+});
+
+// Root endpoint - Welcome message
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Rotary Finance API is running',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      finance: '/api/finance/*'
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Health check endpoint
