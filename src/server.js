@@ -5,7 +5,7 @@ require('dotenv').config();
 const financeRoutes = require('./routes/financeRoutes');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(cors());
