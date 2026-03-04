@@ -3,6 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 
 const financeRoutes = require('./routes/financeRoutes');
+const clubRoutes = require('./routes/clubRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -26,6 +27,7 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
+      club: '/api/club/*',
       finance: '/api/finance/*'
     },
     timestamp: new Date().toISOString()
@@ -39,6 +41,7 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/finance', financeRoutes);
+app.use('/api/club', clubRoutes);
 
 // 404 handler
 app.use((req, res) => {
