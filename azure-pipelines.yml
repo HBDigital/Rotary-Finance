@@ -71,6 +71,7 @@ stages:
     # ===== ZERO DOWNTIME DEPLOY =====
     - script: |
         set -e
+        sudo -u ubuntu bash << 'EOF'
 
         echo "Creating releases folder..."
         sudo mkdir -p $(releasesPath)
@@ -94,6 +95,7 @@ stages:
         cd $(currentPath)
         pm2 reload all || pm2 start index.js --name RotaryFinanceAPI
         pm2 save
+        EOF
 
       displayName: Zero downtime deploy with PM2
 
