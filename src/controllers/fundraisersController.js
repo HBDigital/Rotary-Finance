@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired } = require('../utils/helpers');
+const { getClubByUserkey } = require('../utils/clubHelper');
 
 // List all fundraisers for a club
 const getFundraisers = async (req, res) => {
@@ -10,11 +11,12 @@ const getFundraisers = async (req, res) => {
       return errorResponse(res, 'userkey is required', 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     let query = `
       SELECT 
@@ -63,11 +65,12 @@ const createFundraiser = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     const fundraiserId = generateId();
 
@@ -114,11 +117,12 @@ const updateFundraiser = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Build dynamic update query
     const updates = [];
@@ -169,11 +173,12 @@ const getDonations = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Get fundraiser details
     const [fundraisers] = await pool.query(`
@@ -239,11 +244,12 @@ const addDonation = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Verify fundraiser exists
     const [fundraisers] = await pool.query(
@@ -303,11 +309,12 @@ const getSharingStats = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Verify fundraiser exists
     const [fundraisers] = await pool.query(

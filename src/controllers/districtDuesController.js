@@ -1,5 +1,7 @@
 const pool = require('../config/database');
+const manchesterPool = require('../config/manchesterDb');
 const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired, calculateStatus } = require('../utils/helpers');
+const { getClubByUserkey, getMembersByUserkey } = require('../utils/clubHelper');
 
 // Get all district dues for a club
 const getDistrictDues = async (req, res) => {
@@ -10,12 +12,12 @@ const getDistrictDues = async (req, res) => {
       return errorResponse(res, 'userkey is required', 400);
     }
 
-    // Get club by userkey
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Get rotary year (default to current)
     let rotaryYearCondition = 'ry.is_current = TRUE';
@@ -115,12 +117,12 @@ const markAsPaid = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    // Get club by userkey
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Get current rotary year
     const [rotaryYears] = await pool.query('SELECT id FROM rotary_years WHERE is_current = TRUE');
@@ -161,12 +163,12 @@ const sendReminder = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    // Get club by userkey
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Get current rotary year
     const [rotaryYears] = await pool.query('SELECT id FROM rotary_years WHERE is_current = TRUE');

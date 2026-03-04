@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired, calculateBillingPeriod } = require('../utils/helpers');
+const { getClubByUserkey } = require('../utils/clubHelper');
 
 // List all subscriptions for a club
 const getSubscriptions = async (req, res) => {
@@ -10,11 +11,12 @@ const getSubscriptions = async (req, res) => {
       return errorResponse(res, 'userkey is required', 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     let query = `
       SELECT 
@@ -63,11 +65,12 @@ const createSubscription = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     const subscriptionId = generateId();
 
@@ -115,11 +118,12 @@ const updateSubscription = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Build dynamic update query
     const updates = [];
@@ -170,11 +174,12 @@ const deactivateSubscription = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     const [result] = await pool.query(`
       UPDATE subscriptions 
@@ -203,11 +208,12 @@ const getTransactions = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Get subscription details
     const [subscriptions] = await pool.query(`
@@ -306,8 +312,9 @@ const markTransactionPaid = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
 
@@ -347,11 +354,12 @@ const addMembers = async (req, res) => {
       return errorResponse(res, 'member_ids must be a non-empty array', 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // Get subscription
     const [subscriptions] = await pool.query(

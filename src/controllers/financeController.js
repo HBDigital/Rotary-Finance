@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { apiResponse, errorResponse } = require('../utils/helpers');
+const { getClubByUserkey } = require('../utils/clubHelper');
 
 // Get aggregated finance summary
 const getFinanceSummary = async (req, res) => {
@@ -10,11 +11,12 @@ const getFinanceSummary = async (req, res) => {
       return errorResponse(res, 'userkey is required', 400);
     }
 
-    const [clubs] = await pool.query('SELECT id FROM clubs WHERE userkey = ?', [userkey]);
-    if (clubs.length === 0) {
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = clubs[0].id;
+    const clubId = userkey; // Use userkey as club_id
 
     // District Dues Summary (current year)
     const [duesSummary] = await pool.query(`
