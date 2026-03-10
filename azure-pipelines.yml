@@ -55,7 +55,7 @@ steps:
     npm install --production
 
     #echo "Setting permissions..."
-    #chown -R ubuntu:ubuntu $(deployRoot)
+    #chown -R azureagent:azureagent $(deployRoot)
 
     echo "Switching to new release (zero downtime)..."
     ln -sfn $RELEASE_DIR $(currentPath)
