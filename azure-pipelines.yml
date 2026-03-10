@@ -1,7 +1,6 @@
 trigger:
 - none
 
-# ================= VARIABLES =================
 variables:
   nodeVersion: '18.x'
   artifactName: 'RotaryFinanceAPI'
@@ -12,10 +11,11 @@ variables:
   tempDeployPath: '/home/azureagent/RotaryFinanceAPI'
 
 
-# ================= BUILD STAGE =================
 stages:
+
+# ================= BUILD STAGE =================
 - stage: Build
-  displayName: "Build Node Application"
+  displayName: Build Node Application
 
   jobs:
   - job: BuildJob
@@ -23,6 +23,7 @@ stages:
       name: Build-Pool
 
     steps:
+
     - checkout: self
       clean: true
 
@@ -31,16 +32,6 @@ stages:
         versionSpec: $(nodeVersion)
       displayName: Install Node.js
 
-    - task: Cache@2
-      inputs:
-        key: 'npm | "$(Agent.OS)" | package-lock.json'
-        path: 'node_modules'
-      displayName: Cache npm packages
-
-    - script: npm ci
-      displayName: Install dependencies
-
-    # Publish FULL project (not dist)
     - task: PublishPipelineArtifact@1
       inputs:
         targetPath: '$(Build.SourcesDirectory)'
@@ -48,9 +39,10 @@ stages:
       displayName: Publish artifact
 
 
+
 # ================= DEPLOY STAGE =================
 - stage: Deploy
-  displayName: "Deploy Node API to Linux"
+  displayName: Deploy Node API to Linux
   dependsOn: Build
 
   jobs:
@@ -59,6 +51,7 @@ stages:
       name: UbuntuAws
 
     steps:
+
     - checkout: none
 
     - task: DownloadPipelineArtifact@2
@@ -68,40 +61,74 @@ stages:
       displayName: Download artifact
 
 
-    # ===== ZERO DOWNTIME DEPLOY =====
     - script: |
         set -e
+
         sudo -u ubuntu bash << 'EOF'
 
-        echo "Creating releases folder..."
-        sudo mkdir -p $(releasesPath)
+        echo "Preparing deployment..."
+
+        mkdir -p $(releasesPath)
+
+        PREVIOUS_RELEASE=$(readlink -f $(currentPath) || true)
+
+        rollback() {
+          echo "Deployment failed! Rolling back..."
+          if [ -n "$PREVIOUS_RELEASE" ]; then
+            ln -sfn $PREVIOUS_RELEASE $(currentPath)
+            pm2 reload all
+          fi
+        }
+
+        trap rollback ERR
 
         RELEASE_DIR=$(releasesPath)/$(date +%Y%m%d%H%M%S)
 
-        echo "Creating new release: $RELEASE_DIR"
-        sudo mkdir -p $RELEASE_DIR
+        echo "Creating new release folder: $RELEASE_DIR"
+        mkdir -p $RELEASE_DIR
 
-        echo "Copying files..."
-        sudo rsync -av --exclude node_modules $(tempDeployPath)/ $RELEASE_DIR/
+        echo "Copying application files..."
+        rsync -av --exclude node_modules $(tempDeployPath)/ $RELEASE_DIR/
 
-        echo "Installing dependencies on server..."
+        if [ -d "$PREVIOUS_RELEASE/node_modules" ]; then
+          echo "Reusing node_modules from previous release..."
+          cp -R $PREVIOUS_RELEASE/node_modules $RELEASE_DIR/
+        fi
+
+        echo "Installing dependencies..."
         cd $RELEASE_DIR
-        npm ci --production
+        npm install --production
 
-        echo "Switching symlink..."
-        sudo ln -sfn $RELEASE_DIR $(currentPath)
+        #echo "Starting temporary app for health check..."
+        #pm2 start index.js --name RotaryFinanceAPI-test --no-autorestart
 
-        echo "Restarting PM2..."
+        #echo "Waiting for app to start..."
+        #sleep 5
+
+        echo "Running health check..."
+        curl -f http://localhost:3004/health
+
+        echo "Health check passed"
+
+        #echo "Stopping test process..."
+        #pm2 delete RotaryFinanceAPI-test
+
+        echo "Switching symlink to new release..."
+        ln -sfn $RELEASE_DIR $(currentPath)
+
+        echo "Restarting application..."
         cd $(currentPath)
-        pm2 reload all || pm2 start index.js --name RotaryFinanceAPI
+        pm2 reload RotaryFinanceAPI || pm2 start src/server.js --name RotaryFinanceAPI
         pm2 save
+
+        echo "Deployment successful"
+
         EOF
 
-      displayName: Zero downtime deploy with PM2
+      displayName: Zero downtime deploy with health check
 
 
-    # ===== CLEAN OLD RELEASES =====
     - script: |
-        echo "Cleaning old releases (keeping last 5)..."
-        ls -dt $(releasesPath)/* | tail -n +6 | sudo xargs -r rm -rf
+        echo "Cleaning old releases..."
+        ls -dt $(releasesPath)/* | tail -n +6 | xargs -r rm -rf
       displayName: Cleanup old releases
