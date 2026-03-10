@@ -64,6 +64,9 @@ stages:
     - script: |
         set -e
 
+        echo "Fixing artifact permissions..."
+        sudo chmod -R 755 $(tempDeployPath)
+
         sudo -u ubuntu bash << 'EOF'
 
         echo "Preparing deployment..."
@@ -72,32 +75,17 @@ stages:
 
         PREVIOUS_RELEASE=$(readlink -f $(currentPath) || true)
 
-        rollback() {
-          echo "Deployment failed! Rolling back..."
-          if [ -n "$PREVIOUS_RELEASE" ]; then
-            ln -sfn $PREVIOUS_RELEASE $(currentPath)
-            pm2 reload all
-          fi
-        }
-
-        trap rollback ERR
-
         RELEASE_DIR=$(releasesPath)/$(date +%Y%m%d%H%M%S)
 
-        echo "Creating new release folder: $RELEASE_DIR"
+        echo "Creating release folder..."
         mkdir -p $RELEASE_DIR
 
-        echo "Copying application files..."
+        echo "Copying files..."
         rsync -av --exclude node_modules $(tempDeployPath)/ $RELEASE_DIR/
 
-        if [ -d "$PREVIOUS_RELEASE/node_modules" ]; then
-          echo "Reusing node_modules from previous release..."
-          cp -R $PREVIOUS_RELEASE/node_modules $RELEASE_DIR/
-        fi
-
-        echo "Installing dependencies..."
         cd $RELEASE_DIR
         npm install --production
+  
 
         #echo "Starting temporary app for health check..."
         #pm2 start index.js --name RotaryFinanceAPI-test --no-autorestart
