@@ -10,113 +10,61 @@ variables:
   currentPath: '/home/ubuntu/RotaryFinanceAPI/current'
   tempDeployPath: '/home/azureagent/RotaryFinanceAPI'
 
+pool:
+  name: UbuntuAws   # self-hosted Ubuntu agent
 
-stages:
+steps:
+- checkout: self
 
-# ================= BUILD STAGE =================
-- stage: Build
-  displayName: Build Node Application
+# Use Node.js 18
+- task: NodeTool@0
+  inputs:
+    versionSpec: '18.x'
+  displayName: 'Use Node.js 18'
 
-  jobs:
-  - job: BuildJob
-    pool:
-      name: Build-Pool
+# Install dependencies in agent workspace
+#- script: |
+    #npm install 
+  #workingDirectory: $(Build.SourcesDirectory)
+  #displayName: 'Install dependencies'
 
-    steps:
+# Copy files to runtime directory (owned by ubuntu)
+#- script: |
+    #sudo rsync -av --delete \
+      #$(Build.SourcesDirectory)/ \
+      #/home/ubuntu/RotaryFinanceAPI/
+  #displayName: 'Deploy to /home/ubuntu/RotaryFinanceAPI'
 
-    - checkout: self
-      clean: true
+# Reload or start PM2 app AS ubuntu user
+- script: |
+    sudo -u ubuntu bash << 'EOF'
 
-    - task: NodeTool@0
-      inputs:
-        versionSpec: $(nodeVersion)
-      displayName: Install Node.js
+    echo "Creating required folders..."
+    mkdir -p $(releasesPath)
 
-    - task: PublishPipelineArtifact@1
-      inputs:
-        targetPath: '$(Build.SourcesDirectory)'
-        artifact: $(artifactName)
-      displayName: Publish artifact
+    RELEASE_DIR=$(releasesPath)/$(date +%Y%m%d%H%M%S)
 
+    echo "Creating new release folder: $RELEASE_DIR"
+    mkdir -p $RELEASE_DIR
 
+    echo "Copying application files..."
+    rsync -av --delete --exclude node_modules $(Build.SourcesDirectory)/ $RELEASE_DIR/
 
-# ================= DEPLOY STAGE =================
-- stage: Deploy
-  displayName: Deploy Node API to Linux
-  dependsOn: Build
+    echo "Installing dependencies in release directory..."
+    cd $RELEASE_DIR
+    npm install --production
 
-  jobs:
-  - job: DeployJob
-    pool:
-      name: UbuntuAws
+    #echo "Setting permissions..."
+    #chown -R ubuntu:ubuntu $(deployRoot)
 
-    steps:
+    echo "Switching to new release (zero downtime)..."
+    ln -sfn $RELEASE_DIR $(currentPath)
 
-    - checkout: none
+    echo "Restarting application..."
+    cd $(currentPath)
 
-    - task: DownloadPipelineArtifact@2
-      inputs:
-        artifact: $(artifactName)
-        path: $(tempDeployPath)
-      displayName: Download artifact
+    pm2 reload RotaryFinanceAPI --update-env || pm2 start src/server.js --name RotaryFinanceAPI
+    pm2 save
 
-
-    - script: |
-        set -e
-
-        echo "Fixing artifact permissions..."
-        sudo chmod -R 755 $(tempDeployPath)
-
-        sudo -u ubuntu bash << 'EOF'
-
-        echo "Preparing deployment..."
-
-        mkdir -p $(releasesPath)
-
-        PREVIOUS_RELEASE=$(readlink -f $(currentPath) || true)
-
-        RELEASE_DIR=$(releasesPath)/$(date +%Y%m%d%H%M%S)
-
-        echo "Creating release folder..."
-        mkdir -p $RELEASE_DIR
-
-        echo "Copying files..."
-        rsync -av --exclude node_modules $(tempDeployPath)/ $RELEASE_DIR/
-
-        cd $RELEASE_DIR
-        npm install --production
-  
-
-        #echo "Starting temporary app for health check..."
-        #pm2 start index.js --name RotaryFinanceAPI-test --no-autorestart
-
-        #echo "Waiting for app to start..."
-        #sleep 5
-
-        echo "Running health check..."
-        curl -f http://localhost:3004/health
-
-        echo "Health check passed"
-
-        #echo "Stopping test process..."
-        #pm2 delete RotaryFinanceAPI-test
-
-        echo "Switching symlink to new release..."
-        ln -sfn $RELEASE_DIR $(currentPath)
-
-        echo "Restarting application..."
-        cd $(currentPath)
-        pm2 reload RotaryFinanceAPI || pm2 start src/server.js --name RotaryFinanceAPI
-        pm2 save
-
-        echo "Deployment successful"
-
-        EOF
-
-      displayName: Zero downtime deploy with health check
-
-
-    - script: |
-        echo "Cleaning old releases..."
-        ls -dt $(releasesPath)/* | tail -n +6 | xargs -r rm -rf
-      displayName: Cleanup old releases
+    EOF
+  displayName: Zero downtime deployment
