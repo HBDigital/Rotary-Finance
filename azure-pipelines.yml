@@ -2,38 +2,67 @@ trigger:
 - main
 
 pool:
-  name: UbuntuAws   # self-hosted Ubuntu agent
+  name: UbuntuAws
 
 steps:
 - checkout: self
 
-# Use Node.js 18
+# Use Node.js
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
   displayName: 'Use Node.js 18'
 
-# Install dependencies in agent workspace
+# Install dependencies
 - script: |
-    npm install 
+    npm install
   workingDirectory: $(Build.SourcesDirectory)
   displayName: 'Install dependencies'
 
-# Copy files to runtime directory (owned by ubuntu)
+# Create release folder
+- script: |
+    RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
+
+    echo "Release: $RELEASE_NAME"
+
+    sudo mkdir -p /home/ubuntu/TestFinance/RotaryFinanceAPI
+    sudo mkdir -p /home/ubuntu/TestFinance/RotaryFinanceAPI/$RELEASE_NAME
+
+    echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
+
+  displayName: "Create Release Folder"
+
+# Copy files to release folder
 - script: |
     sudo rsync -av --delete \
       $(Build.SourcesDirectory)/ \
-      /home/ubuntu/TestFinance/
-  displayName: 'Deploy to /home/ubuntu/TestFinance'
+      /home/ubuntu/TestFinance/RotaryFinanceAPI/$(RELEASE_NAME)/
+  displayName: "Copy Files to Release"
 
-# Reload or start PM2 app AS ubuntu user
+# Update current folder
+- script: |
+    sudo ln -sfn \
+    /home/ubuntu/TestFinance/RotaryFinanceAPI/$(RELEASE_NAME) \
+    /home/ubuntu/TestFinance/current
+  displayName: "Update Current Release"
+
+# Keep only 3 releases
+- script: |
+    cd /home/ubuntu/TestFinance/RotaryFinanceAPI
+    ls -dt */ | tail -n +4 | xargs -r sudo rm -rf
+  displayName: "Keep Last 3 Releases"
+
+# Restart PM2
 - script: |
     sudo -u ubuntu bash << 'EOF'
-    cd /home/ubuntu/TestFinance
-    
+    cd /home/ubuntu/TestFinance/current
+    pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
     EOF
   displayName: 'Reload PM2 app'
 
+# Notification
 # - script: |
-#     curl -X POST -H "Content-Type: application/json" -d '{"text":"FeeQuick API has been deployed on the AWS environment successfully!"}' "$(GOOGLECHATHOOK)"
+#     curl -X POST -H "Content-Type: application/json" \
+#     -d '{"text":"FeeQuick API deployed successfully!"}' \
+#     "$(GOOGLECHATHOOK)"
 #   displayName: 'Send Google Chat Notification'
