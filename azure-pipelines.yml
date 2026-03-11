@@ -49,7 +49,7 @@ steps:
 # Keep only 3 releases
 - script: |
     cd /home/ubuntu/TestFinance
-    ls -dt */ | tail -n +4 | xargs -r sudo rm -rf
+    ls -dt RotaryFinanceAPI_*/ | tail -n +4 | xargs -r sudo rm -rf
   displayName: "Keep Last 3 Releases"
 
 # Restart PM2
