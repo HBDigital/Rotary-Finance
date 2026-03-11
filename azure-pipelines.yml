@@ -6,30 +6,30 @@ pool:
 
 steps:
 
-# Checkout code
+# 1. Checkout source
 - checkout: self
 
 
-# Use Node.js
+# 2. Use Node.js
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
   displayName: 'Use Node.js 18'
 
 
-# Install dependencies
+# 3. Install dependencies
 - script: |
     npm install
   workingDirectory: $(Build.SourcesDirectory)
   displayName: 'Install dependencies'
 
 
-# Create new release folder
+# 4. Create release folder
 - script: |
 
     RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
 
-    echo "Creating release: $RELEASE_NAME"
+    echo "Creating release folder: $RELEASE_NAME"
 
     sudo mkdir -p /home/ubuntu/TestFinance
     sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
@@ -39,22 +39,25 @@ steps:
   displayName: "Create Release Folder"
 
 
-# Copy project files
+# 5. Copy files to release
 - script: |
 
-    echo "Copying files to release folder"
+    echo "Copying files..."
 
     sudo rsync -av --delete \
+    --exclude node_modules \
+    --exclude .git \
     $(Build.SourcesDirectory)/ \
     /home/ubuntu/TestFinance/$(RELEASE_NAME)/
 
   displayName: "Copy Files to Release"
 
 
-# Update current symlink
+# 6. Update current symlink
 - script: |
 
-    echo "Updating current release"
+    echo "Updating current release link"
+
     sudo ln -sfn \
     /home/ubuntu/TestFinance/$(RELEASE_NAME) \
     /home/ubuntu/TestFinance/current
@@ -62,29 +65,38 @@ steps:
   displayName: "Update Current Release"
 
 
-# Keep only last 3 release folders
+# 7. Keep only 3 release folders
 - script: |
 
-    echo "Removing old releases (keeping latest 3)"
+    echo "Cleaning old releases..."
+
     cd /home/ubuntu/TestFinance
+
     ls -dt RotaryFinanceAPI_*/ | tail -n +4 | xargs -r sudo rm -rf
+
+    echo "Remaining release folders:"
+    ls -d RotaryFinanceAPI_*/
 
   displayName: "Keep Last 3 Releases"
 
 
-# Restart PM2
+# 8. Restart PM2
 - script: |
 
+    echo "Restarting PM2..."
+
     sudo -u ubuntu bash << 'EOF'
+
     cd /home/ubuntu/TestFinance/current
+
     EOF
 
-  displayName: 'Reload PM2 app'
+  displayName: "Reload PM2 App"
 
 
-# Optional Notification
+# 9. Optional Google Chat notification
 # - script: |
 #     curl -X POST -H "Content-Type: application/json" \
-#     -d '{"text":"Rotary Finance API deployed successfully!"}' \
+#     -d '{"text":"RotaryFinance API deployed successfully!"}' \
 #     "$(GOOGLECHATHOOK)"
-#   displayName: 'Send Google Chat Notification'
+#   displayName: "Send Google Chat Notification"
