@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired, calculateBillingPeriod } = require('../utils/helpers');
-const { getClubByUserkey } = require('../utils/clubHelper');
+const { getClubByUserkey, getMembersByUserkey } = require('../utils/clubHelper');
 
 // List all subscriptions for a club
 const getSubscriptions = async (req, res) => {
@@ -286,14 +286,74 @@ const getTransactions = async (req, res) => {
       WHERE st.subscription_id = ?
     `, [subscription_id]);
 
+    // Get all club members from manchesterclub database
+    const allMembers = await getMembersByUserkey(userkey);
+
+    // Get enrolled member IDs for this subscription
+    const [enrolledMembers] = await pool.query(`
+      SELECT member_id FROM subscription_members WHERE subscription_id = ? AND status = 'active'
+    `, [subscription_id]);
+    const enrolledMemberIds = new Set(enrolledMembers.map(m => m.member_id));
+
+    // Create a map of transactions by member_id for quick lookup
+    const transactionMap = new Map();
+    for (const txn of transactions) {
+      transactionMap.set(txn.member_id, txn);
+    }
+
+    // Build members list with payment status
+    const members = allMembers.map(member => {
+      const memberId = String(member.id);
+      const isEnrolled = enrolledMemberIds.has(memberId);
+      const transaction = transactionMap.get(memberId);
+      
+      return {
+        id: member.id,
+        member_id: member.member_id,
+        name: member.name,
+        email: member.email,
+        phone: member.phone,
+        is_enrolled: isEnrolled,
+        payment_status: transaction ? transaction.status : (isEnrolled ? 'no_transaction' : 'not_enrolled'),
+        amount: transaction ? transaction.amount : null,
+        total_amount: transaction ? transaction.total_amount : null,
+        late_fee: transaction ? transaction.late_fee : null,
+        due_date: transaction ? transaction.due_date : null,
+        paid_on: transaction ? transaction.paid_on : null,
+        payment_mode: transaction ? transaction.payment_mode : null,
+        reference_id: transaction ? transaction.reference_id : null,
+        billing_period_start: transaction ? transaction.billing_period_start : null,
+        billing_period_end: transaction ? transaction.billing_period_end : null
+      };
+    });
+
+    // Apply search filter to members if provided
+    let filteredMembers = members;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredMembers = members.filter(m => 
+        (m.name && m.name.toLowerCase().includes(searchLower)) ||
+        (m.email && m.email.toLowerCase().includes(searchLower)) ||
+        (m.phone && m.phone.includes(search))
+      );
+    }
+
+    // Apply status filter to members if provided
+    if (status && status !== 'all') {
+      filteredMembers = filteredMembers.filter(m => m.payment_status === status);
+    }
+
     return apiResponse(res, true, {
       subscription: subscriptions[0],
       summary: {
-        total_members: summary[0].total_members || 0,
+        total_club_members: allMembers.length,
+        enrolled_members: enrolledMemberIds.size,
+        total_transactions: summary[0].total_members || 0,
         collected: parseFloat(summary[0].collected) || 0,
         pending: parseFloat(summary[0].pending) || 0,
         overdue_count: summary[0].overdue_count || 0
       },
+      members: filteredMembers,
       transactions
     }, 'Transactions fetched successfully');
 

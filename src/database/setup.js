@@ -32,9 +32,10 @@ async function setupDatabase() {
     );
 
     -- Members table (replicated from external system)
+    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey), not local clubs table
     CREATE TABLE IF NOT EXISTS members (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(36) NOT NULL,
+      club_id VARCHAR(50) NOT NULL,
       external_member_id VARCHAR(100),
       name VARCHAR(255) NOT NULL,
       email VARCHAR(255),
@@ -43,7 +44,6 @@ async function setupDatabase() {
       joined_date DATE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
       INDEX idx_club_id (club_id),
       INDEX idx_external_id (external_member_id),
       INDEX idx_status (status)
@@ -62,24 +62,25 @@ async function setupDatabase() {
     );
 
     -- District Dues Configuration
+    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
     CREATE TABLE IF NOT EXISTS district_dues_config (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(36) NOT NULL,
+      club_id VARCHAR(50) NOT NULL,
       rotary_year_id VARCHAR(36) NOT NULL,
       amount DECIMAL(10, 2) NOT NULL DEFAULT 1000.00,
       due_date DATE NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
       FOREIGN KEY (rotary_year_id) REFERENCES rotary_years(id) ON DELETE CASCADE,
       UNIQUE KEY uk_club_year (club_id, rotary_year_id),
       INDEX idx_club_id (club_id)
     );
 
     -- District Dues Payments
+    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
     CREATE TABLE IF NOT EXISTS district_dues_payments (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(36) NOT NULL,
+      club_id VARCHAR(50) NOT NULL,
       member_id VARCHAR(36) NOT NULL,
       rotary_year_id VARCHAR(36) NOT NULL,
       amount DECIMAL(10, 2) NOT NULL,
@@ -92,7 +93,6 @@ async function setupDatabase() {
       reminder_sent_at TIMESTAMP NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
       FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       FOREIGN KEY (rotary_year_id) REFERENCES rotary_years(id) ON DELETE CASCADE,
       UNIQUE KEY uk_member_year (member_id, rotary_year_id),
@@ -102,9 +102,10 @@ async function setupDatabase() {
     );
 
     -- Subscriptions
+    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
     CREATE TABLE IF NOT EXISTS subscriptions (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(36) NOT NULL,
+      club_id VARCHAR(50) NOT NULL,
       name VARCHAR(255) NOT NULL,
       description TEXT,
       amount DECIMAL(10, 2) NOT NULL,
@@ -118,7 +119,6 @@ async function setupDatabase() {
       deactivation_date DATE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
       INDEX idx_club_id (club_id),
       INDEX idx_status (status)
     );
@@ -166,9 +166,10 @@ async function setupDatabase() {
     );
 
     -- Fundraisers
+    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
     CREATE TABLE IF NOT EXISTS fundraisers (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(36) NOT NULL,
+      club_id VARCHAR(50) NOT NULL,
       title VARCHAR(255) NOT NULL,
       description TEXT,
       cover_photo_url VARCHAR(500),
@@ -182,7 +183,6 @@ async function setupDatabase() {
       thank_you_message TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
       INDEX idx_club_id (club_id),
       INDEX idx_status (status),
       INDEX idx_dates (start_date, end_date)
@@ -232,16 +232,16 @@ async function setupDatabase() {
     );
 
     -- Payment Reminders Log
+    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
     CREATE TABLE IF NOT EXISTS reminder_logs (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(36) NOT NULL,
+      club_id VARCHAR(50) NOT NULL,
       reminder_type ENUM('district_dues', 'subscription') NOT NULL,
       reference_id VARCHAR(36) NOT NULL,
       member_id VARCHAR(36) NOT NULL,
       sent_via ENUM('email', 'sms', 'whatsapp', 'push') NOT NULL,
       sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       status ENUM('sent', 'delivered', 'failed') DEFAULT 'sent',
-      FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
       FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       INDEX idx_club_id (club_id),
       INDEX idx_reference_id (reference_id),
