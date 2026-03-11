@@ -1,14 +1,5 @@
 trigger:
-- none
-
-variables:
-  nodeVersion: '18.x'
-  artifactName: 'RotaryFinanceAPI'
-
-  deployRoot: '/home/ubuntu/RotaryFinanceAPI'
-  releasesPath: '/home/ubuntu/RotaryFinanceAPI/releases'
-  currentPath: '/home/ubuntu/RotaryFinanceAPI/current'
-  tempDeployPath: '/home/azureagent/RotaryFinanceAPI'
+- main
 
 pool:
   name: UbuntuAws   # self-hosted Ubuntu agent
@@ -23,48 +14,26 @@ steps:
   displayName: 'Use Node.js 18'
 
 # Install dependencies in agent workspace
-#- script: |
-    #npm install 
-  #workingDirectory: $(Build.SourcesDirectory)
-  #displayName: 'Install dependencies'
+- script: |
+    npm install 
+  workingDirectory: $(Build.SourcesDirectory)
+  displayName: 'Install dependencies'
 
 # Copy files to runtime directory (owned by ubuntu)
-#- script: |
-    #sudo rsync -av --delete \
-      #$(Build.SourcesDirectory)/ \
-      #/home/ubuntu/RotaryFinanceAPI/
-  #displayName: 'Deploy to /home/ubuntu/RotaryFinanceAPI'
+- script: |
+    sudo rsync -av --delete \
+      $(Build.SourcesDirectory)/ \
+      /home/ubuntu/TestFinance/
+  displayName: 'Deploy to /home/ubuntu/TestFinance'
 
 # Reload or start PM2 app AS ubuntu user
 - script: |
     sudo -u ubuntu bash << 'EOF'
-
-    echo "Creating required folders..."
-    mkdir -p $(releasesPath)
-
-    RELEASE_DIR=$(releasesPath)/$(date +%Y%m%d%H%M%S)
-
-    echo "Creating new release folder: $RELEASE_DIR"
-    mkdir -p $RELEASE_DIR
-
-    echo "Copying application files..."
-    rsync -av --delete --exclude node_modules $(Build.SourcesDirectory)/ $RELEASE_DIR/
-
-    echo "Installing dependencies in release directory..."
-    cd $RELEASE_DIR
-    npm install --production
-
-    #echo "Setting permissions..."
-    #chown -R azureagent:azureagent $(deployRoot)
-
-    echo "Switching to new release (zero downtime)..."
-    ln -sfn $RELEASE_DIR $(currentPath)
-
-    echo "Restarting application..."
-    cd $(currentPath)
-
-    pm2 reload RotaryFinanceAPI --update-env || pm2 start src/server.js --name RotaryFinanceAPI
-    pm2 save
-
+    cd /home/ubuntu/TestFinance
+    
     EOF
-  displayName: Zero downtime deployment
+  displayName: 'Reload PM2 app'
+
+# - script: |
+#     curl -X POST -H "Content-Type: application/json" -d '{"text":"FeeQuick API has been deployed on the AWS environment successfully!"}' "$(GOOGLECHATHOOK)"
+#   displayName: 'Send Google Chat Notification'
