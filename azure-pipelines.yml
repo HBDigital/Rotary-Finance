@@ -65,17 +65,16 @@ steps:
   displayName: "Update Current Release"
 
 
-# 7. Keep only 3 release folders
 - script: |
 
     echo "Cleaning old releases..."
 
-    cd /home/ubuntu/TestFinance
+    cd /home/ubuntu/TestFinance || exit
 
-    ls -dt RotaryFinanceAPI_*/ | tail -n +4 | xargs -r sudo rm -rf
+    ls -dt RotaryFinanceAPI_* 2>/dev/null | tail -n +4 | xargs -r rm -rf
 
     echo "Remaining release folders:"
-    ls -d RotaryFinanceAPI_*/
+    ls -d RotaryFinanceAPI_* 2>/dev/null || echo "No releases found"
 
   displayName: "Keep Last 3 Releases"
 
