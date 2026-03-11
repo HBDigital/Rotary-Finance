@@ -56,7 +56,6 @@ steps:
 - script: |
     sudo -u ubuntu bash << 'EOF'
     cd /home/ubuntu/TestFinance/current
-    pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
     EOF
   displayName: 'Reload PM2 app'
 
