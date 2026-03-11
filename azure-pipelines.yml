@@ -5,7 +5,10 @@ pool:
   name: UbuntuAws
 
 steps:
+
+# Checkout code
 - checkout: self
+
 
 # Use Node.js
 - task: NodeTool@0
@@ -13,17 +16,20 @@ steps:
     versionSpec: '18.x'
   displayName: 'Use Node.js 18'
 
+
 # Install dependencies
 - script: |
     npm install
   workingDirectory: $(Build.SourcesDirectory)
   displayName: 'Install dependencies'
 
-# Create release folder
+
+# Create new release folder
 - script: |
+
     RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
 
-    echo "Release: $RELEASE_NAME"
+    echo "Creating release: $RELEASE_NAME"
 
     sudo mkdir -p /home/ubuntu/TestFinance
     sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
@@ -32,30 +38,53 @@ steps:
 
   displayName: "Create Release Folder"
 
-# Copy files to release folder
+
+# Copy project files
 - script: |
+
+    echo "Copying files to release folder"
+
     sudo rsync -av --delete \
-      $(Build.SourcesDirectory)/ \
-      /home/ubuntu/TestFinance/$(RELEASE_NAME)/
+    $(Build.SourcesDirectory)/ \
+    /home/ubuntu/TestFinance/$(RELEASE_NAME)/
+
   displayName: "Copy Files to Release"
 
-# Update current folder
+
+# Update current symlink
 - script: |
+
+    echo "Updating current release"
     sudo ln -sfn \
     /home/ubuntu/TestFinance/$(RELEASE_NAME) \
     /home/ubuntu/TestFinance/current
+
   displayName: "Update Current Release"
 
-# Keep only 3 releases
+
+# Keep only last 3 release folders
 - script: |
+
+    echo "Removing old releases (keeping latest 3)"
     cd /home/ubuntu/TestFinance
     ls -dt RotaryFinanceAPI_*/ | tail -n +4 | xargs -r sudo rm -rf
+
   displayName: "Keep Last 3 Releases"
+
 
 # Restart PM2
 - script: |
+
     sudo -u ubuntu bash << 'EOF'
     cd /home/ubuntu/TestFinance/current
     EOF
+
   displayName: 'Reload PM2 app'
 
+
+# Optional Notification
+# - script: |
+#     curl -X POST -H "Content-Type: application/json" \
+#     -d '{"text":"Rotary Finance API deployed successfully!"}' \
+#     "$(GOOGLECHATHOOK)"
+#   displayName: 'Send Google Chat Notification'
