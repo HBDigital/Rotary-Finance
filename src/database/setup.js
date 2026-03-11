@@ -78,10 +78,11 @@ async function setupDatabase() {
 
     -- District Dues Payments
     -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
+    -- Note: member_id references manchesterclub.userprofile.id
     CREATE TABLE IF NOT EXISTS district_dues_payments (
       id VARCHAR(36) PRIMARY KEY,
       club_id VARCHAR(50) NOT NULL,
-      member_id VARCHAR(36) NOT NULL,
+      member_id VARCHAR(50) NOT NULL,
       rotary_year_id VARCHAR(36) NOT NULL,
       amount DECIMAL(10, 2) NOT NULL,
       due_date DATE NOT NULL,
@@ -93,7 +94,6 @@ async function setupDatabase() {
       reminder_sent_at TIMESTAMP NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       FOREIGN KEY (rotary_year_id) REFERENCES rotary_years(id) ON DELETE CASCADE,
       UNIQUE KEY uk_member_year (member_id, rotary_year_id),
       INDEX idx_club_id (club_id),
@@ -123,25 +123,26 @@ async function setupDatabase() {
       INDEX idx_status (status)
     );
 
-    -- Subscription Members (which members are part of which subscription)
+    -- Subscription Members (tracks opted-out members only, all members enrolled by default)
+    -- Note: member_id references manchesterclub.userprofile.id
     CREATE TABLE IF NOT EXISTS subscription_members (
       id VARCHAR(36) PRIMARY KEY,
       subscription_id VARCHAR(36) NOT NULL,
-      member_id VARCHAR(36) NOT NULL,
+      member_id VARCHAR(50) NOT NULL,
       joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       status ENUM('active', 'inactive') DEFAULT 'active',
       FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       UNIQUE KEY uk_sub_member (subscription_id, member_id),
       INDEX idx_subscription_id (subscription_id),
       INDEX idx_member_id (member_id)
     );
 
     -- Subscription Transactions (payment records for each billing cycle)
+    -- Note: member_id references manchesterclub.userprofile.id
     CREATE TABLE IF NOT EXISTS subscription_transactions (
       id VARCHAR(36) PRIMARY KEY,
       subscription_id VARCHAR(36) NOT NULL,
-      member_id VARCHAR(36) NOT NULL,
+      member_id VARCHAR(50) NOT NULL,
       billing_period_start DATE NOT NULL,
       billing_period_end DATE NOT NULL,
       amount DECIMAL(10, 2) NOT NULL,
@@ -157,7 +158,6 @@ async function setupDatabase() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       INDEX idx_subscription_id (subscription_id),
       INDEX idx_member_id (member_id),
       INDEX idx_status (status),
@@ -189,24 +189,23 @@ async function setupDatabase() {
     );
 
     -- Fundraiser Donations
+    -- Note: member_id references manchesterclub.userprofile.id
     CREATE TABLE IF NOT EXISTS fundraiser_donations (
       id VARCHAR(36) PRIMARY KEY,
       fundraiser_id VARCHAR(36) NOT NULL,
       donor_name VARCHAR(255),
       donor_email VARCHAR(255),
       donor_phone VARCHAR(20),
-      member_id VARCHAR(36),
+      member_id VARCHAR(50),
       amount DECIMAL(12, 2) NOT NULL,
       is_anonymous BOOLEAN DEFAULT FALSE,
       payment_mode VARCHAR(50),
       reference_id VARCHAR(100),
       notes TEXT,
-      referred_by_member_id VARCHAR(36),
+      referred_by_member_id VARCHAR(50),
       donated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (fundraiser_id) REFERENCES fundraisers(id) ON DELETE CASCADE,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE SET NULL,
-      FOREIGN KEY (referred_by_member_id) REFERENCES members(id) ON DELETE SET NULL,
       INDEX idx_fundraiser_id (fundraiser_id),
       INDEX idx_member_id (member_id),
       INDEX idx_referred_by (referred_by_member_id),
@@ -214,10 +213,11 @@ async function setupDatabase() {
     );
 
     -- Social Sharing Tracking (for leaderboard)
+    -- Note: member_id references manchesterclub.userprofile.id
     CREATE TABLE IF NOT EXISTS fundraiser_shares (
       id VARCHAR(36) PRIMARY KEY,
       fundraiser_id VARCHAR(36) NOT NULL,
-      member_id VARCHAR(36) NOT NULL,
+      member_id VARCHAR(50) NOT NULL,
       share_platform VARCHAR(50),
       share_link VARCHAR(500),
       click_count INT DEFAULT 0,
@@ -226,23 +226,22 @@ async function setupDatabase() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (fundraiser_id) REFERENCES fundraisers(id) ON DELETE CASCADE,
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       INDEX idx_fundraiser_id (fundraiser_id),
       INDEX idx_member_id (member_id)
     );
 
     -- Payment Reminders Log
     -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
+    -- Note: member_id references manchesterclub.userprofile.id
     CREATE TABLE IF NOT EXISTS reminder_logs (
       id VARCHAR(36) PRIMARY KEY,
       club_id VARCHAR(50) NOT NULL,
       reminder_type ENUM('district_dues', 'subscription') NOT NULL,
       reference_id VARCHAR(36) NOT NULL,
-      member_id VARCHAR(36) NOT NULL,
+      member_id VARCHAR(50) NOT NULL,
       sent_via ENUM('email', 'sms', 'whatsapp', 'push') NOT NULL,
       sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       status ENUM('sent', 'delivered', 'failed') DEFAULT 'sent',
-      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
       INDEX idx_club_id (club_id),
       INDEX idx_reference_id (reference_id),
       INDEX idx_sent_at (sent_at)

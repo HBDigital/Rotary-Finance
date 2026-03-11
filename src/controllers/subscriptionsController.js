@@ -289,11 +289,11 @@ const getTransactions = async (req, res) => {
     // Get all club members from manchesterclub database
     const allMembers = await getMembersByUserkey(userkey);
 
-    // Get enrolled member IDs for this subscription
-    const [enrolledMembers] = await pool.query(`
-      SELECT member_id FROM subscription_members WHERE subscription_id = ? AND status = 'active'
+    // Get opted-out member IDs for this subscription (members who explicitly opted out)
+    const [optedOutMembers] = await pool.query(`
+      SELECT member_id FROM subscription_members WHERE subscription_id = ? AND status = 'inactive'
     `, [subscription_id]);
-    const enrolledMemberIds = new Set(enrolledMembers.map(m => m.member_id));
+    const optedOutMemberIds = new Set(optedOutMembers.map(m => m.member_id));
 
     // Create a map of transactions by member_id for quick lookup
     const transactionMap = new Map();
@@ -302,9 +302,11 @@ const getTransactions = async (req, res) => {
     }
 
     // Build members list with payment status
+    // By default, all members are enrolled unless they explicitly opted out
     const members = allMembers.map(member => {
       const memberId = String(member.id);
-      const isEnrolled = enrolledMemberIds.has(memberId);
+      const isOptedOut = optedOutMemberIds.has(memberId);
+      const isEnrolled = !isOptedOut; // Enrolled by default unless opted out
       const transaction = transactionMap.get(memberId);
       
       return {
@@ -314,9 +316,9 @@ const getTransactions = async (req, res) => {
         email: member.email,
         phone: member.phone,
         is_enrolled: isEnrolled,
-        payment_status: transaction ? transaction.status : (isEnrolled ? 'no_transaction' : 'not_enrolled'),
-        amount: transaction ? transaction.amount : null,
-        total_amount: transaction ? transaction.total_amount : null,
+        payment_status: transaction ? transaction.status : (isEnrolled ? 'pending' : 'opted_out'),
+        amount: transaction ? transaction.amount : (isEnrolled ? subscriptions[0].amount : null),
+        total_amount: transaction ? transaction.total_amount : (isEnrolled ? subscriptions[0].amount : null),
         late_fee: transaction ? transaction.late_fee : null,
         due_date: transaction ? transaction.due_date : null,
         paid_on: transaction ? transaction.paid_on : null,
@@ -343,11 +345,15 @@ const getTransactions = async (req, res) => {
       filteredMembers = filteredMembers.filter(m => m.payment_status === status);
     }
 
+    // Calculate enrolled count (all members minus opted out)
+    const enrolledCount = allMembers.length - optedOutMemberIds.size;
+
     return apiResponse(res, true, {
       subscription: subscriptions[0],
       summary: {
         total_club_members: allMembers.length,
-        enrolled_members: enrolledMemberIds.size,
+        enrolled_members: enrolledCount,
+        opted_out_members: optedOutMemberIds.size,
         total_transactions: summary[0].total_members || 0,
         collected: parseFloat(summary[0].collected) || 0,
         pending: parseFloat(summary[0].pending) || 0,
@@ -365,9 +371,9 @@ const getTransactions = async (req, res) => {
 // Mark subscription payment as paid
 const markTransactionPaid = async (req, res) => {
   try {
-    const { userkey, transaction_id, paid_on, payment_mode, reference_id, notes } = req.body;
+    const { userkey, subscription_id, member_id, paid_on, payment_mode, reference_id, notes, amount } = req.body;
 
-    const validation = validateRequired(req.body, ['userkey', 'transaction_id', 'paid_on']);
+    const validation = validateRequired(req.body, ['userkey', 'subscription_id', 'member_id', 'paid_on']);
     if (!validation.valid) {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
@@ -377,20 +383,53 @@ const markTransactionPaid = async (req, res) => {
     if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
+    const clubId = userkey;
 
-    const [result] = await pool.query(`
-      UPDATE subscription_transactions 
-      SET status = 'paid', 
-          paid_on = ?, 
-          payment_mode = ?, 
-          reference_id = ?, 
-          notes = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [formatDateForDB(paid_on), payment_mode, reference_id, notes, transaction_id]);
+    // Get subscription details
+    const [subscriptions] = await pool.query(
+      'SELECT * FROM subscriptions WHERE id = ? AND club_id = ?',
+      [subscription_id, clubId]
+    );
+    if (subscriptions.length === 0) {
+      return errorResponse(res, 'Subscription not found', 404);
+    }
+    const subscription = subscriptions[0];
 
-    if (result.affectedRows === 0) {
-      return errorResponse(res, 'Transaction not found', 404);
+    // Calculate billing period
+    const billingPeriod = calculateBillingPeriod(subscription.frequency, subscription.collection_day);
+
+    // Check if transaction exists for this member and billing period
+    const [existingTxn] = await pool.query(`
+      SELECT id FROM subscription_transactions 
+      WHERE subscription_id = ? AND member_id = ? AND billing_period_start = ?
+    `, [subscription_id, member_id, billingPeriod.start]);
+
+    const txnAmount = amount || subscription.amount;
+
+    if (existingTxn.length > 0) {
+      // Update existing transaction
+      await pool.query(`
+        UPDATE subscription_transactions 
+        SET status = 'paid', 
+            paid_on = ?, 
+            payment_mode = ?, 
+            reference_id = ?, 
+            notes = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [formatDateForDB(paid_on), payment_mode, reference_id, notes, existingTxn[0].id]);
+    } else {
+      // Create new transaction record (member is enrolled by default)
+      await pool.query(`
+        INSERT INTO subscription_transactions 
+        (id, subscription_id, member_id, billing_period_start, billing_period_end, amount, late_fee, total_amount, due_date, status, paid_on, payment_mode, reference_id, notes)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'paid', ?, ?, ?, ?)
+      `, [
+        generateId(), subscription_id, member_id, 
+        billingPeriod.start, billingPeriod.end, 
+        txnAmount, txnAmount, billingPeriod.start,
+        formatDateForDB(paid_on), payment_mode, reference_id, notes
+      ]);
     }
 
     return apiResponse(res, true, null, 'Payment marked as paid successfully');
