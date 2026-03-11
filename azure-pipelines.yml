@@ -59,9 +59,3 @@ steps:
     EOF
   displayName: 'Reload PM2 app'
 
-# Notification
-# - script: |
-#     curl -X POST -H "Content-Type: application/json" \
-#     -d '{"text":"FeeQuick API deployed successfully!"}' \
-#     "$(GOOGLECHATHOOK)"
-#   displayName: 'Send Google Chat Notification'
