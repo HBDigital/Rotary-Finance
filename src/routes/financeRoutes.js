@@ -19,6 +19,8 @@ router.post('/subscriptions/deactivate', subscriptionsController.deactivateSubsc
 router.post('/subscriptions/transactions', subscriptionsController.getTransactions);
 router.post('/subscriptions/mark-paid', subscriptionsController.markTransactionPaid);
 router.post('/subscriptions/add-members', subscriptionsController.addMembers);
+router.post('/subscriptions/opt-out', subscriptionsController.optOutMember);
+router.post('/subscriptions/opt-in', subscriptionsController.optInMember);
 
 // Fundraisers Routes
 router.post('/fundraisers', fundraisersController.getFundraisers);
