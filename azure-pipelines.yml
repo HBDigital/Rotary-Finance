@@ -8,92 +8,92 @@ pool:
 
 steps:
 
-# 1. Checkout source code
+# Checkout code
 - checkout: self
 
 
-# 2. Use Node.js 18
+# Use Node.js
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
-  displayName: 'Use Node.js 18'
+  displayName: Use Node.js
 
 
-# 3. Install dependencies in pipeline workspace
+# Install dependencies (pipeline workspace)
 - task: CmdLine@2
-  displayName: 'Install dependencies'
+  displayName: Install dependencies
   inputs:
     script: |
       npm install
     workingDirectory: $(Build.SourcesDirectory)
 
 
-# 4. Create release folder
+# Create new release folder
 - task: CmdLine@2
-  displayName: 'Create Release Folder'
+  displayName: Create Release Folder
   inputs:
     script: |
 
       RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
 
-      echo "Release Name: $RELEASE_NAME"
+      echo "Release: $RELEASE_NAME"
 
-      sudo mkdir -p /home/ubuntu/TestFinance
-      sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
+      sudo -u ubuntu mkdir -p /home/ubuntu/TestFinance
+      sudo -u ubuntu mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
 
       echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
 
 
-# 5. Copy project files to release folder
+# Copy files to release
 - task: CmdLine@2
-  displayName: 'Copy Files to Release'
+  displayName: Copy Files
   inputs:
     script: |
 
-      sudo rsync -av --delete \
+      sudo -u ubuntu rsync -av --delete \
       --exclude node_modules \
       --exclude .git \
       $(Build.SourcesDirectory)/ \
       /home/ubuntu/TestFinance/$(RELEASE_NAME)/
 
 
-# 6. Update current symlink
+# Update current symlink
 - task: CmdLine@2
-  displayName: 'Update Current Release'
+  displayName: Update Current Release
   inputs:
     script: |
 
-      sudo ln -sfn \
+      sudo -u ubuntu ln -sfn \
       /home/ubuntu/TestFinance/$(RELEASE_NAME) \
       /home/ubuntu/TestFinance/current
 
 
-# 7. Install npm packages in latest folder
+# Install npm packages in latest release
 - task: CmdLine@2
-  displayName: 'Install npm in latest release'
+  displayName: Install npm packages
   inputs:
     script: |
 
       sudo -u ubuntu bash << 'EOF'
+
       cd /home/ubuntu/TestFinance/current
+
       npm install
 
       EOF
 
 
-# 8. Keep only last 3 releases
+# Keep only last 3 releases
 - task: CmdLine@2
-  displayName: 'Keep Last 3 Releases'
+  displayName: Keep Last 3 Releases
   inputs:
     script: |
 
-      echo "Cleaning old releases..."
+      sudo -u ubuntu bash << 'EOF'
 
-      sudo bash << 'EOF'
+      cd /home/ubuntu/TestFinance
 
-      cd /home/ubuntu/TestFinance || exit
-
-      ls -dt RotaryFinanceAPI_*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+      ls -dt RotaryFinanceAPI_*/ | tail -n +4 | xargs -r rm -rf
 
       echo "Remaining releases:"
       ls -d RotaryFinanceAPI_*/
@@ -101,13 +101,16 @@ steps:
       EOF
 
 
-# 9. Restart PM2 application
+# Restart application using PM2
 - task: CmdLine@2
-  displayName: 'Restart PM2 App'
+  displayName: Restart PM2
   inputs:
     script: |
 
       sudo -u ubuntu bash << 'EOF'
+
       cd /home/ubuntu/TestFinance/current
+
+
 
       EOF
