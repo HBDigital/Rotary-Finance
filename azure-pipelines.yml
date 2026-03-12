@@ -1,42 +1,100 @@
 trigger:
-- deploy
+  branches:
+    include:
+      - main
 
 pool:
-  name: UbuntuAws   # self-hosted Ubuntu agent
+  name: UbuntuAws
 
 steps:
+
+# Checkout repository
 - checkout: self
 
-# Use Node.js 18
+
+# Use Node
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
-  displayName: 'Use Node.js 18'
+  displayName: Use Node.js 18
 
-# Install dependencies in agent workspace
-- script: |
-    npm install 
-  workingDirectory: $(Build.SourcesDirectory)
-  displayName: 'Install dependencies'
 
-# Copy files to runtime directory (owned by ubuntu)
-- script: |
-    sudo rsync -av --delete \
+# Install dependencies
+- task: CmdLine@2
+  displayName: Install dependencies
+  inputs:
+    script: |
+      npm install
+    workingDirectory: $(Build.SourcesDirectory)
+
+
+# Create release folder
+- task: CmdLine@2
+  displayName: Create Release Folder
+  inputs:
+    script: |
+
+      RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
+
+      echo "Release Name: $RELEASE_NAME"
+
+      sudo mkdir -p /home/ubuntu/TestFinance
+      sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
+
+      echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
+
+
+# Copy files
+- task: CmdLine@2
+  displayName: Copy Files
+  inputs:
+    script: |
+
+      sudo rsync -av --delete \
+      --exclude node_modules \
+      --exclude .git \
       $(Build.SourcesDirectory)/ \
-      /home/ubuntu/RotaryFinanceAPI/
-  displayName: 'Deploy to /home/ubuntu/RotaryFinanceAPI'
-
-# Reload or start PM2 app AS ubuntu user
-- script: |
-    sudo -u ubuntu bash << 'EOF'
-    cd /home/ubuntu/RotaryFinanceAPI
-    pm2 reload RotaryFinanceAPI --update-env || pm2 start index.js --name RotaryFinanceAPI
-    pm2 save
-    EOF
-  displayName: 'Reload PM2 app'
-
-- script: |
-    curl -X POST -H "Content-Type: application/json" -d '{"text":"Rotary FinanceAPI has been deployed on the AWS environment successfully!"}' "$(GOOGLECHATHOOK)"
-  displayName: 'Send Google Chat Notification'
+      /home/ubuntu/TestFinance/$(RELEASE_NAME)/
 
 
+# Update current symlink
+- task: CmdLine@2
+  displayName: Update Current Release
+  inputs:
+    script: |
+
+      sudo ln -sfn \
+      /home/ubuntu/TestFinance/$(RELEASE_NAME) \
+      /home/ubuntu/TestFinance/current
+
+
+# Maintain only 3 folders
+- task: CmdLine@2
+  displayName: Keep Last 3 Releases
+  inputs:
+    script: |
+
+      echo "Cleaning old releases..."
+
+      sudo bash << 'EOF'
+
+      cd /home/ubuntu/TestFinance || exit
+
+      ls -dt RotaryFinanceAPI_*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+
+      echo "Remaining releases:"
+      ls -d RotaryFinanceAPI_*/ 2>/dev/null
+
+      EOF
+
+
+# Restart PM2
+- task: CmdLine@2
+  displayName: Reload PM2 app
+  inputs:
+    script: |
+
+      sudo -u ubuntu bash << 'EOF'
+      cd /home/ubuntu/TestFinance/current
+
+      EOF
