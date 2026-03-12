@@ -65,6 +65,11 @@ const createSubscription = async (req, res) => {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
+    // Validate late fee does not exceed 50% of amount
+    if (late_fee_enabled && late_fee_amount > (amount * 0.5)) {
+      return errorResponse(res, 'Late fee cannot exceed 50% of the subscription amount', 400);
+    }
+
     // Verify club exists in manchesterclub database
     const club = await getClubByUserkey(userkey);
     if (!club) {
@@ -124,6 +129,18 @@ const updateSubscription = async (req, res) => {
       return errorResponse(res, 'Club not found', 404);
     }
     const clubId = userkey; // Use userkey as club_id
+
+    // Get current subscription to check amount for late fee validation
+    const [currentSub] = await pool.query('SELECT amount FROM subscriptions WHERE id = ? AND club_id = ?', [subscription_id, clubId]);
+    if (currentSub.length === 0) {
+      return errorResponse(res, 'Subscription not found', 404);
+    }
+
+    // Validate late fee does not exceed 50% of amount
+    const effectiveAmount = amount !== undefined ? amount : currentSub[0].amount;
+    if (late_fee_amount !== undefined && late_fee_amount > (effectiveAmount * 0.5)) {
+      return errorResponse(res, 'Late fee cannot exceed 50% of the subscription amount', 400);
+    }
 
     // Build dynamic update query
     const updates = [];
@@ -507,6 +524,107 @@ const addMembers = async (req, res) => {
   }
 };
 
+// Opt-out member from a subscription
+const optOutMember = async (req, res) => {
+  try {
+    const { userkey, subscription_id, member_id } = req.body;
+
+    const validation = validateRequired(req.body, ['userkey', 'subscription_id', 'member_id']);
+    if (!validation.valid) {
+      return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
+    }
+
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
+      return errorResponse(res, 'Club not found', 404);
+    }
+    const clubId = userkey;
+
+    // Verify subscription exists
+    const [subscriptions] = await pool.query(
+      'SELECT * FROM subscriptions WHERE id = ? AND club_id = ?',
+      [subscription_id, clubId]
+    );
+    if (subscriptions.length === 0) {
+      return errorResponse(res, 'Subscription not found', 404);
+    }
+
+    // Check if member already has an opt-out record
+    const [existingRecord] = await pool.query(`
+      SELECT id, status FROM subscription_members 
+      WHERE subscription_id = ? AND member_id = ?
+    `, [subscription_id, member_id]);
+
+    if (existingRecord.length > 0) {
+      // Update existing record to inactive
+      await pool.query(`
+        UPDATE subscription_members 
+        SET status = 'inactive'
+        WHERE subscription_id = ? AND member_id = ?
+      `, [subscription_id, member_id]);
+    } else {
+      // Create new record with inactive status
+      await pool.query(`
+        INSERT INTO subscription_members (id, subscription_id, member_id, status)
+        VALUES (?, ?, ?, 'inactive')
+      `, [generateId(), subscription_id, member_id]);
+    }
+
+    return apiResponse(res, true, null, 'Member opted out from subscription successfully');
+
+  } catch (error) {
+    return errorResponse(res, 'Failed to opt-out member', 500, error);
+  }
+};
+
+// Opt-in member back to a subscription
+const optInMember = async (req, res) => {
+  try {
+    const { userkey, subscription_id, member_id } = req.body;
+
+    const validation = validateRequired(req.body, ['userkey', 'subscription_id', 'member_id']);
+    if (!validation.valid) {
+      return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
+    }
+
+    // Verify club exists in manchesterclub database
+    const club = await getClubByUserkey(userkey);
+    if (!club) {
+      return errorResponse(res, 'Club not found', 404);
+    }
+    const clubId = userkey;
+
+    // Verify subscription exists
+    const [subscriptions] = await pool.query(
+      'SELECT * FROM subscriptions WHERE id = ? AND club_id = ?',
+      [subscription_id, clubId]
+    );
+    if (subscriptions.length === 0) {
+      return errorResponse(res, 'Subscription not found', 404);
+    }
+
+    // Check if member has an opt-out record
+    const [existingRecord] = await pool.query(`
+      SELECT id FROM subscription_members 
+      WHERE subscription_id = ? AND member_id = ?
+    `, [subscription_id, member_id]);
+
+    if (existingRecord.length > 0) {
+      // Update existing record to active (or delete it since all members are enrolled by default)
+      await pool.query(`
+        DELETE FROM subscription_members 
+        WHERE subscription_id = ? AND member_id = ?
+      `, [subscription_id, member_id]);
+    }
+
+    return apiResponse(res, true, null, 'Member opted back into subscription successfully');
+
+  } catch (error) {
+    return errorResponse(res, 'Failed to opt-in member', 500, error);
+  }
+};
+
 module.exports = {
   getSubscriptions,
   createSubscription,
@@ -514,5 +632,7 @@ module.exports = {
   deactivateSubscription,
   getTransactions,
   markTransactionPaid,
-  addMembers
+  addMembers,
+  optOutMember,
+  optInMember
 };
