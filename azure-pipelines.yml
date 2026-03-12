@@ -1,101 +1,105 @@
 trigger:
-- main
+  branches:
+    include:
+      - main
 
 pool:
   name: UbuntuAws
 
 steps:
 
-# 1. Checkout source
+# Checkout repository
 - checkout: self
 
 
-# 2. Use Node.js
+# Use Node
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
-  displayName: 'Use Node.js 18'
+  displayName: Use Node.js 18
 
 
-# 3. Install dependencies
-- script: |
-    npm install
-  workingDirectory: $(Build.SourcesDirectory)
-  displayName: 'Install dependencies'
+# Install dependencies
+- task: CmdLine@2
+  displayName: Install dependencies
+  inputs:
+    script: |
+      npm install
+    workingDirectory: $(Build.SourcesDirectory)
 
 
-# 4. Create release folder
-- script: |
+# Create release folder
+- task: CmdLine@2
+  displayName: Create Release Folder
+  inputs:
+    script: |
 
-    RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
+      RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
 
-    echo "Creating release folder: $RELEASE_NAME"
+      echo "Release Name: $RELEASE_NAME"
 
-    sudo mkdir -p /home/ubuntu/TestFinance
-    sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
+      sudo mkdir -p /home/ubuntu/TestFinance
+      sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
 
-    echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
-
-  displayName: "Create Release Folder"
-
-
-# 5. Copy files to release
-- script: |
-
-    echo "Copying files..."
-
-    sudo rsync -av --delete \
-    --exclude node_modules \
-    --exclude .git \
-    $(Build.SourcesDirectory)/ \
-    /home/ubuntu/TestFinance/$(RELEASE_NAME)/
-
-  displayName: "Copy Files to Release"
+      echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
 
 
-# 6. Update current symlink
-- script: |
+# Copy files
+- task: CmdLine@2
+  displayName: Copy Files
+  inputs:
+    script: |
 
-    echo "Updating current release link"
-
-    sudo ln -sfn \
-    /home/ubuntu/TestFinance/$(RELEASE_NAME) \
-    /home/ubuntu/TestFinance/current
-
-  displayName: "Update Current Release"
-
-
-- script: |
-
-    echo "Cleaning old releases..."
-
-    cd /home/ubuntu/TestFinance || exit
-
-    ls -dt RotaryFinanceAPI_* 2>/dev/null | tail -n +4 | xargs -r rm -rf
-
-    echo "Remaining release folders:"
-    ls -d RotaryFinanceAPI_* 2>/dev/null || echo "No releases found"
-
-  displayName: "Keep Last 3 Releases"
+      sudo rsync -av --delete \
+      --exclude node_modules \
+      --exclude .git \
+      $(Build.SourcesDirectory)/ \
+      /home/ubuntu/TestFinance/$(RELEASE_NAME)/
 
 
-# 8. Restart PM2
-- script: |
+# Update current symlink
+- task: CmdLine@2
+  displayName: Update Current Release
+  inputs:
+    script: |
 
-    echo "Restarting PM2..."
-
-    sudo -u ubuntu bash << 'EOF'
-
-    cd /home/ubuntu/TestFinance/current
-
-    EOF
-
-  displayName: "Reload PM2 App"
+      sudo ln -sfn \
+      /home/ubuntu/TestFinance/$(RELEASE_NAME) \
+      /home/ubuntu/TestFinance/current
 
 
-# 9. Optional Google Chat notification
-# - script: |
-#     curl -X POST -H "Content-Type: application/json" \
-#     -d '{"text":"RotaryFinance API deployed successfully!"}' \
-#     "$(GOOGLECHATHOOK)"
-#   displayName: "Send Google Chat Notification"
+# Maintain only 3 folders
+- task: CmdLine@2
+  displayName: Keep Last 3 Releases
+  inputs:
+    script: |
+
+      echo "Cleaning old releases..."
+
+      sudo bash << 'EOF'
+
+      cd /home/ubuntu/TestFinance || exit
+
+      ls -dt RotaryFinanceAPI_*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
+
+      echo "Remaining releases:"
+      ls -d RotaryFinanceAPI_*/ 2>/dev/null
+
+      EOF
+
+
+# Restart PM2
+- task: CmdLine@2
+  displayName: Reload PM2 app
+  inputs:
+    script: |
+
+      sudo -u ubuntu bash << 'EOF'
+
+      cd /home/ubuntu/TestFinance/current
+
+      pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
+
+      pm2 save
+
+      EOF
