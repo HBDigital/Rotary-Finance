@@ -2,21 +2,10 @@ const pool = require('../config/database');
 const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired } = require('../utils/helpers');
 const { getClubByUserkey } = require('../utils/clubHelper');
 
-// List all fundraisers for a club
+// List all fundraisers (optionally filtered by club)
 const getFundraisers = async (req, res) => {
   try {
     const { userkey, status } = req.body;
-
-    if (!userkey) {
-      return errorResponse(res, 'userkey is required', 400);
-    }
-
-    // Verify club exists in manchesterclub database
-    const club = await getClubByUserkey(userkey);
-    if (!club) {
-      return errorResponse(res, 'Club not found', 404);
-    }
-    const clubId = userkey; // Use userkey as club_id
 
     let query = `
       SELECT 
@@ -24,9 +13,20 @@ const getFundraisers = async (req, res) => {
         (SELECT COUNT(*) FROM fundraiser_donations fd WHERE fd.fundraiser_id = f.id) as donor_count,
         ROUND((f.raised_amount / f.target_amount) * 100, 0) as progress_percentage
       FROM fundraisers f
-      WHERE f.club_id = ?
+      WHERE 1=1
     `;
-    const params = [clubId];
+    const params = [];
+
+    // If userkey provided, filter by club
+    if (userkey) {
+      // Verify club exists in manchesterclub database
+      const club = await getClubByUserkey(userkey);
+      if (!club) {
+        return errorResponse(res, 'Club not found', 404);
+      }
+      query += ` AND f.club_id = ?`;
+      params.push(userkey);
+    }
 
     if (status && status !== 'all') {
       query += ` AND f.status = ?`;

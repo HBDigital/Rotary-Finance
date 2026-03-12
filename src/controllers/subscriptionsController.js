@@ -1,6 +1,6 @@
 const pool = require('../config/database');
 const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired, calculateBillingPeriod } = require('../utils/helpers');
-const { getClubByUserkey } = require('../utils/clubHelper');
+const { getClubByUserkey, getMembersByUserkey } = require('../utils/clubHelper');
 
 // List all subscriptions for a club
 const getSubscriptions = async (req, res) => {
@@ -227,13 +227,11 @@ const getTransactions = async (req, res) => {
       return errorResponse(res, 'Subscription not found', 404);
     }
 
+    // Get transactions without joining local members table (members are in manchesterclub)
     let query = `
       SELECT 
         st.id,
         st.member_id,
-        m.name as member_name,
-        m.email as member_email,
-        m.phone as member_phone,
         st.billing_period_start,
         st.billing_period_end,
         st.amount,
@@ -246,23 +244,11 @@ const getTransactions = async (req, res) => {
         st.reference_id,
         st.notes
       FROM subscription_transactions st
-      JOIN members m ON st.member_id = m.id
       WHERE st.subscription_id = ?
     `;
     const params = [subscription_id];
 
-    if (status && status !== 'all') {
-      query += ` AND st.status = ?`;
-      params.push(status);
-    }
-
-    if (search) {
-      query += ` AND (m.name LIKE ? OR m.phone LIKE ? OR m.email LIKE ?)`;
-      const searchPattern = `%${search}%`;
-      params.push(searchPattern, searchPattern, searchPattern);
-    }
-
-    query += ` ORDER BY st.due_date DESC, m.name ASC`;
+    query += ` ORDER BY st.due_date DESC`;
 
     const [transactions] = await pool.query(query, params);
 
@@ -286,14 +272,80 @@ const getTransactions = async (req, res) => {
       WHERE st.subscription_id = ?
     `, [subscription_id]);
 
+    // Get all club members from manchesterclub database
+    const allMembers = await getMembersByUserkey(userkey);
+
+    // Get opted-out member IDs for this subscription (members who explicitly opted out)
+    const [optedOutMembers] = await pool.query(`
+      SELECT member_id FROM subscription_members WHERE subscription_id = ? AND status = 'inactive'
+    `, [subscription_id]);
+    const optedOutMemberIds = new Set(optedOutMembers.map(m => m.member_id));
+
+    // Create a map of transactions by member_id for quick lookup (ensure string keys)
+    const transactionMap = new Map();
+    for (const txn of transactions) {
+      transactionMap.set(String(txn.member_id), txn);
+    }
+
+    // Build members list with payment status
+    // By default, all members are enrolled unless they explicitly opted out
+    const members = allMembers.map(member => {
+      const memberId = String(member.id);
+      const isOptedOut = optedOutMemberIds.has(memberId);
+      const isEnrolled = !isOptedOut; // Enrolled by default unless opted out
+      const transaction = transactionMap.get(memberId);
+      
+      return {
+        id: member.id,
+        member_id: member.member_id,
+        name: member.name,
+        email: member.email,
+        phone: member.phone,
+        is_enrolled: isEnrolled,
+        payment_status: transaction ? transaction.status : (isEnrolled ? 'pending' : 'opted_out'),
+        amount: transaction ? transaction.amount : (isEnrolled ? subscriptions[0].amount : null),
+        total_amount: transaction ? transaction.total_amount : (isEnrolled ? subscriptions[0].amount : null),
+        late_fee: transaction ? transaction.late_fee : null,
+        due_date: transaction ? transaction.due_date : null,
+        paid_on: transaction ? transaction.paid_on : null,
+        payment_mode: transaction ? transaction.payment_mode : null,
+        reference_id: transaction ? transaction.reference_id : null,
+        billing_period_start: transaction ? transaction.billing_period_start : null,
+        billing_period_end: transaction ? transaction.billing_period_end : null
+      };
+    });
+
+    // Apply search filter to members if provided
+    let filteredMembers = members;
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filteredMembers = members.filter(m => 
+        (m.name && m.name.toLowerCase().includes(searchLower)) ||
+        (m.email && m.email.toLowerCase().includes(searchLower)) ||
+        (m.phone && m.phone.includes(search))
+      );
+    }
+
+    // Apply status filter to members if provided
+    if (status && status !== 'all') {
+      filteredMembers = filteredMembers.filter(m => m.payment_status === status);
+    }
+
+    // Calculate enrolled count (all members minus opted out)
+    const enrolledCount = allMembers.length - optedOutMemberIds.size;
+
     return apiResponse(res, true, {
       subscription: subscriptions[0],
       summary: {
-        total_members: summary[0].total_members || 0,
+        total_club_members: allMembers.length,
+        enrolled_members: enrolledCount,
+        opted_out_members: optedOutMemberIds.size,
+        total_transactions: summary[0].total_members || 0,
         collected: parseFloat(summary[0].collected) || 0,
         pending: parseFloat(summary[0].pending) || 0,
         overdue_count: summary[0].overdue_count || 0
       },
+      members: filteredMembers,
       transactions
     }, 'Transactions fetched successfully');
 
@@ -305,9 +357,9 @@ const getTransactions = async (req, res) => {
 // Mark subscription payment as paid
 const markTransactionPaid = async (req, res) => {
   try {
-    const { userkey, transaction_id, paid_on, payment_mode, reference_id, notes } = req.body;
+    const { userkey, subscription_id, member_id, paid_on, payment_mode, reference_id, notes, amount } = req.body;
 
-    const validation = validateRequired(req.body, ['userkey', 'transaction_id', 'paid_on']);
+    const validation = validateRequired(req.body, ['userkey', 'subscription_id', 'member_id', 'paid_on']);
     if (!validation.valid) {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
@@ -317,20 +369,58 @@ const markTransactionPaid = async (req, res) => {
     if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
+    const clubId = userkey;
 
-    const [result] = await pool.query(`
-      UPDATE subscription_transactions 
-      SET status = 'paid', 
-          paid_on = ?, 
-          payment_mode = ?, 
-          reference_id = ?, 
-          notes = ?,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [formatDateForDB(paid_on), payment_mode, reference_id, notes, transaction_id]);
+    // Get subscription details
+    const [subscriptions] = await pool.query(
+      'SELECT * FROM subscriptions WHERE id = ? AND club_id = ?',
+      [subscription_id, clubId]
+    );
+    if (subscriptions.length === 0) {
+      return errorResponse(res, 'Subscription not found', 404);
+    }
+    const subscription = subscriptions[0];
 
-    if (result.affectedRows === 0) {
-      return errorResponse(res, 'Transaction not found', 404);
+    // Calculate billing period based on current date
+    const billingPeriod = calculateBillingPeriod(subscription.frequency, new Date());
+
+    // Check if transaction exists for this member (any billing period - update most recent or create new)
+    const [existingTxn] = await pool.query(`
+      SELECT id FROM subscription_transactions 
+      WHERE subscription_id = ? AND member_id = ?
+      ORDER BY billing_period_start DESC
+      LIMIT 1
+    `, [subscription_id, member_id]);
+
+    const txnAmount = amount || subscription.amount;
+
+    if (existingTxn.length > 0) {
+      // Update existing transaction
+      await pool.query(`
+        UPDATE subscription_transactions 
+        SET status = 'paid', 
+            paid_on = ?, 
+            payment_mode = ?, 
+            reference_id = ?, 
+            notes = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [formatDateForDB(paid_on), payment_mode, reference_id, notes, existingTxn[0].id]);
+    } else {
+      // Create new transaction record (member is enrolled by default)
+      const dueDate = new Date();
+      dueDate.setDate(subscription.collection_day || 1);
+      
+      await pool.query(`
+        INSERT INTO subscription_transactions 
+        (id, subscription_id, member_id, billing_period_start, billing_period_end, amount, late_fee, total_amount, due_date, status, paid_on, payment_mode, reference_id, notes)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'paid', ?, ?, ?, ?)
+      `, [
+        generateId(), subscription_id, member_id, 
+        formatDateForDB(billingPeriod.start), formatDateForDB(billingPeriod.end), 
+        txnAmount, txnAmount, formatDateForDB(dueDate),
+        formatDateForDB(paid_on), payment_mode, reference_id, notes
+      ]);
     }
 
     return apiResponse(res, true, null, 'Payment marked as paid successfully');
