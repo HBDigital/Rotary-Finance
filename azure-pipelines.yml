@@ -8,18 +8,18 @@ pool:
 
 steps:
 
-# Checkout code
+# Checkout repository
 - checkout: self
 
 
-# Use Node.js
+# Use Node
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
-  displayName: Use Node.js
+  displayName: Use Node.js 18
 
 
-# Install dependencies (pipeline workspace)
+# Install dependencies
 - task: CmdLine@2
   displayName: Install dependencies
   inputs:
@@ -28,7 +28,7 @@ steps:
     workingDirectory: $(Build.SourcesDirectory)
 
 
-# Create new release folder
+# Create release folder
 - task: CmdLine@2
   displayName: Create Release Folder
   inputs:
@@ -36,21 +36,21 @@ steps:
 
       RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
 
-      echo "Release: $RELEASE_NAME"
+      echo "Release Name: $RELEASE_NAME"
 
-      sudo -u ubuntu mkdir -p /home/ubuntu/TestFinance
-      sudo -u ubuntu mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
+      sudo mkdir -p /home/ubuntu/TestFinance
+      sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
 
       echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
 
 
-# Copy files to release
+# Copy files
 - task: CmdLine@2
   displayName: Copy Files
   inputs:
     script: |
 
-      sudo -u ubuntu rsync -av --delete \
+      sudo rsync -av --delete \
       --exclude node_modules \
       --exclude .git \
       $(Build.SourcesDirectory)/ \
@@ -63,47 +63,34 @@ steps:
   inputs:
     script: |
 
-      sudo -u ubuntu ln -sfn \
+      sudo ln -sfn \
       /home/ubuntu/TestFinance/$(RELEASE_NAME) \
       /home/ubuntu/TestFinance/current
 
 
-# Install npm packages in latest release
-- task: CmdLine@2
-  displayName: Install npm packages
-  inputs:
-    script: |
-
-      sudo -u ubuntu bash << 'EOF'
-
-      cd /home/ubuntu/TestFinance/current
-
-      npm install
-
-      EOF
-
-
-# Keep only last 3 releases
+# Maintain only 3 folders
 - task: CmdLine@2
   displayName: Keep Last 3 Releases
   inputs:
     script: |
 
-      sudo -u ubuntu bash << 'EOF'
+      echo "Cleaning old releases..."
 
-      cd /home/ubuntu/TestFinance
+      sudo bash << 'EOF'
 
-      ls -dt RotaryFinanceAPI_*/ | tail -n +4 | xargs -r rm -rf
+      cd /home/ubuntu/TestFinance || exit
+
+      ls -dt RotaryFinanceAPI_*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
 
       echo "Remaining releases:"
-      ls -d RotaryFinanceAPI_*/
+      ls -d RotaryFinanceAPI_*/ 2>/dev/null
 
       EOF
 
 
-# Restart application using PM2
+# Restart PM2
 - task: CmdLine@2
-  displayName: Restart PM2
+  displayName: Reload PM2 app
   inputs:
     script: |
 
@@ -111,6 +98,8 @@ steps:
 
       cd /home/ubuntu/TestFinance/current
 
+      pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
 
+      pm2 save
 
       EOF
