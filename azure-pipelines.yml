@@ -1,105 +1,36 @@
 trigger:
-  branches:
-    include:
-      - main
+- deploy
 
 pool:
-  name: UbuntuAws
+  name: UbuntuAws   # self-hosted Ubuntu agent
 
 steps:
-
-# Checkout repository
 - checkout: self
 
-
-# Use Node
+# Use Node.js 18
 - task: NodeTool@0
   inputs:
     versionSpec: '18.x'
-  displayName: Use Node.js 18
+  displayName: 'Use Node.js 18'
 
+# Install dependencies in agent workspace
+- script: |
+    npm install 
+  workingDirectory: $(Build.SourcesDirectory)
+  displayName: 'Install dependencies'
 
-# Install dependencies
-- task: CmdLine@2
-  displayName: Install dependencies
-  inputs:
-    script: |
-      npm install
-    workingDirectory: $(Build.SourcesDirectory)
-
-
-# Create release folder
-- task: CmdLine@2
-  displayName: Create Release Folder
-  inputs:
-    script: |
-
-      RELEASE_NAME=RotaryFinanceAPI_$(date +%Y%m%d%H%M%S)
-
-      echo "Release Name: $RELEASE_NAME"
-
-      sudo mkdir -p /home/ubuntu/TestFinance
-      sudo mkdir -p /home/ubuntu/TestFinance/$RELEASE_NAME
-
-      echo "##vso[task.setvariable variable=RELEASE_NAME]$RELEASE_NAME"
-
-
-# Copy files
-- task: CmdLine@2
-  displayName: Copy Files
-  inputs:
-    script: |
-
-      sudo rsync -av --delete \
-      --exclude node_modules \
-      --exclude .git \
+# Copy files to runtime directory (owned by ubuntu)
+- script: |
+    sudo rsync -av --delete \
       $(Build.SourcesDirectory)/ \
-      /home/ubuntu/TestFinance/$(RELEASE_NAME)/
+      /home/ubuntu/TestFinance/
+  displayName: 'Deploy to /home/ubuntu/TestFinance'
 
+# Reload or start PM2 app AS ubuntu user
+- script: |
+    sudo -u ubuntu bash << 'EOF'
+    cd /home/ubuntu/TestFinance
 
-# Update current symlink
-- task: CmdLine@2
-  displayName: Update Current Release
-  inputs:
-    script: |
+    EOF
+  displayName: 'Reload PM2 app'
 
-      sudo ln -sfn \
-      /home/ubuntu/TestFinance/$(RELEASE_NAME) \
-      /home/ubuntu/TestFinance/current
-
-
-# Maintain only 3 folders
-- task: CmdLine@2
-  displayName: Keep Last 3 Releases
-  inputs:
-    script: |
-
-      echo "Cleaning old releases..."
-
-      sudo bash << 'EOF'
-
-      cd /home/ubuntu/TestFinance || exit
-
-      ls -dt RotaryFinanceAPI_*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
-
-      echo "Remaining releases:"
-      ls -d RotaryFinanceAPI_*/ 2>/dev/null
-
-      EOF
-
-
-# Restart PM2
-- task: CmdLine@2
-  displayName: Reload PM2 app
-  inputs:
-    script: |
-
-      sudo -u ubuntu bash << 'EOF'
-
-      cd /home/ubuntu/TestFinance/current
-
-      pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
-
-      pm2 save
-
-      EOF
