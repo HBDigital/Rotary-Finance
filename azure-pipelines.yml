@@ -1,5 +1,5 @@
 trigger:
-- deploy
+- none
 
 pool:
   name: UbuntuAws   # self-hosted Ubuntu agent
@@ -23,14 +23,20 @@ steps:
 - script: |
     sudo rsync -av --delete \
       $(Build.SourcesDirectory)/ \
-      /home/ubuntu/TestFinance/
-  displayName: 'Deploy to /home/ubuntu/TestFinance'
+      /home/ubuntu/RotaryFinanceAPI/
+  displayName: 'Deploy to /home/ubuntu/RotaryFinanceAPI'
 
 # Reload or start PM2 app AS ubuntu user
 - script: |
     sudo -u ubuntu bash << 'EOF'
-    cd /home/ubuntu/TestFinance
-
+    cd /home/ubuntu/RotaryFinanceAPI
+    pm2 reload RotaryFinanceAPI --update-env || pm2 start index.js --name RotaryFinanceAPI
+    pm2 save
     EOF
   displayName: 'Reload PM2 app'
+
+- script: |
+    curl -X POST -H "Content-Type: application/json" -d '{"text":"Rotary FinanceAPI has been deployed on the AWS environment successfully!"}' "$(GOOGLECHATHOOK)"
+  displayName: 'Send Google Chat Notification'
+
 
