@@ -227,13 +227,11 @@ const getTransactions = async (req, res) => {
       return errorResponse(res, 'Subscription not found', 404);
     }
 
+    // Get transactions without joining local members table (members are in manchesterclub)
     let query = `
       SELECT 
         st.id,
         st.member_id,
-        m.name as member_name,
-        m.email as member_email,
-        m.phone as member_phone,
         st.billing_period_start,
         st.billing_period_end,
         st.amount,
@@ -246,23 +244,11 @@ const getTransactions = async (req, res) => {
         st.reference_id,
         st.notes
       FROM subscription_transactions st
-      JOIN members m ON st.member_id = m.id
       WHERE st.subscription_id = ?
     `;
     const params = [subscription_id];
 
-    if (status && status !== 'all') {
-      query += ` AND st.status = ?`;
-      params.push(status);
-    }
-
-    if (search) {
-      query += ` AND (m.name LIKE ? OR m.phone LIKE ? OR m.email LIKE ?)`;
-      const searchPattern = `%${search}%`;
-      params.push(searchPattern, searchPattern, searchPattern);
-    }
-
-    query += ` ORDER BY st.due_date DESC, m.name ASC`;
+    query += ` ORDER BY st.due_date DESC`;
 
     const [transactions] = await pool.query(query, params);
 
@@ -295,10 +281,10 @@ const getTransactions = async (req, res) => {
     `, [subscription_id]);
     const optedOutMemberIds = new Set(optedOutMembers.map(m => m.member_id));
 
-    // Create a map of transactions by member_id for quick lookup
+    // Create a map of transactions by member_id for quick lookup (ensure string keys)
     const transactionMap = new Map();
     for (const txn of transactions) {
-      transactionMap.set(txn.member_id, txn);
+      transactionMap.set(String(txn.member_id), txn);
     }
 
     // Build members list with payment status
@@ -395,14 +381,16 @@ const markTransactionPaid = async (req, res) => {
     }
     const subscription = subscriptions[0];
 
-    // Calculate billing period
-    const billingPeriod = calculateBillingPeriod(subscription.frequency, subscription.collection_day);
+    // Calculate billing period based on current date
+    const billingPeriod = calculateBillingPeriod(subscription.frequency, new Date());
 
-    // Check if transaction exists for this member and billing period
+    // Check if transaction exists for this member (any billing period - update most recent or create new)
     const [existingTxn] = await pool.query(`
       SELECT id FROM subscription_transactions 
-      WHERE subscription_id = ? AND member_id = ? AND billing_period_start = ?
-    `, [subscription_id, member_id, billingPeriod.start]);
+      WHERE subscription_id = ? AND member_id = ?
+      ORDER BY billing_period_start DESC
+      LIMIT 1
+    `, [subscription_id, member_id]);
 
     const txnAmount = amount || subscription.amount;
 
@@ -420,14 +408,17 @@ const markTransactionPaid = async (req, res) => {
       `, [formatDateForDB(paid_on), payment_mode, reference_id, notes, existingTxn[0].id]);
     } else {
       // Create new transaction record (member is enrolled by default)
+      const dueDate = new Date();
+      dueDate.setDate(subscription.collection_day || 1);
+      
       await pool.query(`
         INSERT INTO subscription_transactions 
         (id, subscription_id, member_id, billing_period_start, billing_period_end, amount, late_fee, total_amount, due_date, status, paid_on, payment_mode, reference_id, notes)
         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'paid', ?, ?, ?, ?)
       `, [
         generateId(), subscription_id, member_id, 
-        billingPeriod.start, billingPeriod.end, 
-        txnAmount, txnAmount, billingPeriod.start,
+        formatDateForDB(billingPeriod.start), formatDateForDB(billingPeriod.end), 
+        txnAmount, txnAmount, formatDateForDB(dueDate),
         formatDateForDB(paid_on), payment_mode, reference_id, notes
       ]);
     }
