@@ -1,0 +1,42 @@
+trigger:
+- none
+
+pool:
+  name: UbuntuAws   # self-hosted Ubuntu agent
+
+steps:
+- checkout: self
+
+# Use Node.js 18
+- task: NodeTool@0
+  inputs:
+    versionSpec: '18.x'
+  displayName: 'Use Node.js 18'
+
+# Install dependencies in agent workspace
+- script: |
+    npm install 
+  workingDirectory: $(Build.SourcesDirectory)
+  displayName: 'Install dependencies'
+
+# Copy files to runtime directory (owned by ubuntu)
+- script: |
+    sudo rsync -av --delete \
+      $(Build.SourcesDirectory)/ \
+      /home/ubuntu/RotaryFinanceAPI/
+  displayName: 'Deploy to /home/ubuntu/RotaryFinanceAPI'
+
+# Reload or start PM2 app AS ubuntu user
+- script: |
+    sudo -u ubuntu bash << 'EOF'
+    cd /home/ubuntu/RotaryFinanceAPI
+    pm2 reload RotaryFinanceAPI --update-env || pm2 start index.js --name RotaryFinanceAPI
+    pm2 save
+    EOF
+  displayName: 'Reload PM2 app'
+
+- script: |
+    curl -X POST -H "Content-Type: application/json" -d '{"text":"Rotary FinanceAPI has been deployed on the AWS environment successfully!"}' "$(GOOGLECHATHOOK)"
+  displayName: 'Send Google Chat Notification'
+
+
