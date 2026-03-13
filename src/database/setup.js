@@ -61,44 +61,42 @@ async function setupDatabase() {
       INDEX idx_current (is_current)
     );
 
-    -- District Dues Configuration
-    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
+    -- District Dues Configuration (District-level, per rotary year)
+    -- Admin configurable: amount per member and transaction fee percent
     CREATE TABLE IF NOT EXISTS district_dues_config (
       id VARCHAR(36) PRIMARY KEY,
-      club_id VARCHAR(50) NOT NULL,
-      rotary_year_id VARCHAR(36) NOT NULL,
+      rotary_year VARCHAR(20) NOT NULL,
       amount DECIMAL(10, 2) NOT NULL DEFAULT 1000.00,
-      due_date DATE NOT NULL,
+      transaction_fee_percent DECIMAL(5, 2) NOT NULL DEFAULT 2.50,
+      due_date DATE DEFAULT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (rotary_year_id) REFERENCES rotary_years(id) ON DELETE CASCADE,
-      UNIQUE KEY uk_club_year (club_id, rotary_year_id),
-      INDEX idx_club_id (club_id)
+      UNIQUE KEY uk_rotary_year (rotary_year)
     );
 
-    -- District Dues Payments
-    -- Note: club_id references manchesterclub.clubdetails.clubno (userkey)
-    -- Note: member_id references manchesterclub.userprofile.id
-    CREATE TABLE IF NOT EXISTS district_dues_payments (
+    -- District Dues Club Payments (One payment per club per year)
+    -- Club pays: amount * member_count + transaction_fee
+    CREATE TABLE IF NOT EXISTS district_dues_club_payments (
       id VARCHAR(36) PRIMARY KEY,
       club_id VARCHAR(50) NOT NULL,
-      member_id VARCHAR(50) NOT NULL,
-      rotary_year_id VARCHAR(36) NOT NULL,
-      amount DECIMAL(10, 2) NOT NULL,
-      due_date DATE NOT NULL,
-      status ENUM('pending', 'paid', 'overdue') DEFAULT 'pending',
+      rotary_year VARCHAR(20) NOT NULL,
+      member_count INT NOT NULL,
+      amount_per_member DECIMAL(10, 2) NOT NULL,
+      total_amount DECIMAL(10, 2) NOT NULL,
+      transaction_fee_percent DECIMAL(5, 2) NOT NULL,
+      transaction_fee DECIMAL(10, 2) NOT NULL,
+      grand_total DECIMAL(10, 2) NOT NULL,
+      status ENUM('pending', 'paid') DEFAULT 'pending',
       paid_on DATE,
       payment_mode VARCHAR(50),
       reference_id VARCHAR(100),
       notes TEXT,
-      reminder_sent_at TIMESTAMP NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (rotary_year_id) REFERENCES rotary_years(id) ON DELETE CASCADE,
-      UNIQUE KEY uk_member_year (member_id, rotary_year_id),
+      UNIQUE KEY uk_club_year (club_id, rotary_year),
       INDEX idx_club_id (club_id),
       INDEX idx_status (status),
-      INDEX idx_due_date (due_date)
+      INDEX idx_rotary_year (rotary_year)
     );
 
     -- Subscriptions

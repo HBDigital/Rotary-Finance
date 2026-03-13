@@ -6,10 +6,13 @@ const subscriptionsController = require('../controllers/subscriptionsController'
 const fundraisersController = require('../controllers/fundraisersController');
 const financeController = require('../controllers/financeController');
 
-// District Dues Routes
-router.post('/district-dues', districtDuesController.getDistrictDues);
-router.post('/district-dues/mark-paid', districtDuesController.markAsPaid);
-router.post('/district-dues/send-reminder', districtDuesController.sendReminder);
+// District Dues Routes (New Concept: Club-level payment)
+router.post('/district-dues/config', districtDuesController.getConfig);
+router.post('/district-dues/config/update', districtDuesController.updateConfig);
+router.post('/district-dues/club-summary', districtDuesController.getClubSummary);
+router.post('/district-dues/pay', districtDuesController.payDues);
+router.post('/district-dues/payment-history', districtDuesController.getPaymentHistory);
+router.post('/district-dues/admin/clubs', districtDuesController.getAdminClubsView);
 
 // Subscriptions Routes
 router.post('/subscriptions', subscriptionsController.getSubscriptions);

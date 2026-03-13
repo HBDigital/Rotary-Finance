@@ -1,298 +1,424 @@
 const pool = require('../config/database');
 const manchesterPool = require('../config/manchesterDb');
-const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired, calculateStatus } = require('../utils/helpers');
+const { generateId, formatDateForDB, apiResponse, errorResponse, validateRequired, getCurrentRotaryYear } = require('../utils/helpers');
 const { getClubByUserkey, getMembersByUserkey } = require('../utils/clubHelper');
 
-// Get all district dues for a club
-const getDistrictDues = async (req, res) => {
+// ============================================================================
+// API 1: GET CONFIG - Returns district dues config for a rotary year
+// ============================================================================
+const getConfig = async (req, res) => {
   try {
-    const { userkey, rotary_year, status, search } = req.body;
+    const { rotary_year } = req.body;
+    const targetYear = rotary_year || getCurrentRotaryYear();
+
+    const [config] = await pool.query(`
+      SELECT amount, transaction_fee_percent, rotary_year, due_date
+      FROM district_dues_config 
+      WHERE rotary_year = ?
+    `, [targetYear]);
+
+    if (config.length === 0) {
+      // Return default config if not set
+      return apiResponse(res, true, {
+        amount: 1000,
+        transaction_fee_percent: 2.5,
+        rotary_year: targetYear,
+        due_date: null
+      }, 'Default config returned (not configured yet)');
+    }
+
+    return apiResponse(res, true, {
+      amount: parseFloat(config[0].amount),
+      transaction_fee_percent: parseFloat(config[0].transaction_fee_percent),
+      rotary_year: config[0].rotary_year,
+      due_date: config[0].due_date
+    }, 'Config fetched successfully');
+
+  } catch (error) {
+    return errorResponse(res, 'Failed to fetch config', 500, error);
+  }
+};
+
+// ============================================================================
+// API 2: UPDATE CONFIG (Admin) - Set amount and transaction_fee_percent
+// ============================================================================
+const updateConfig = async (req, res) => {
+  try {
+    const { rotary_year, amount, transaction_fee_percent, due_date } = req.body;
+
+    const validation = validateRequired(req.body, ['rotary_year', 'amount', 'transaction_fee_percent']);
+    if (!validation.valid) {
+      return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
+    }
+
+    // Check if config exists for this year
+    const [existing] = await pool.query(
+      'SELECT id FROM district_dues_config WHERE rotary_year = ?',
+      [rotary_year]
+    );
+
+    if (existing.length > 0) {
+      // Update existing config
+      await pool.query(`
+        UPDATE district_dues_config 
+        SET amount = ?, transaction_fee_percent = ?, due_date = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE rotary_year = ?
+      `, [amount, transaction_fee_percent, formatDateForDB(due_date), rotary_year]);
+    } else {
+      // Create new config
+      await pool.query(`
+        INSERT INTO district_dues_config (id, rotary_year, amount, transaction_fee_percent, due_date)
+        VALUES (?, ?, ?, ?, ?)
+      `, [generateId(), rotary_year, amount, transaction_fee_percent, formatDateForDB(due_date)]);
+    }
+
+    return apiResponse(res, true, {
+      rotary_year,
+      amount,
+      transaction_fee_percent,
+      due_date
+    }, 'Config updated successfully');
+
+  } catch (error) {
+    return errorResponse(res, 'Failed to update config', 500, error);
+  }
+};
+
+// ============================================================================
+// API 3: CLUB SUMMARY - Returns club's dues calculation and payment status
+// ============================================================================
+const getClubSummary = async (req, res) => {
+  try {
+    const { userkey, rotary_year } = req.body;
 
     if (!userkey) {
       return errorResponse(res, 'userkey is required', 400);
     }
 
-    // Verify club exists in manchesterclub database
+    // Verify club exists
     const club = await getClubByUserkey(userkey);
     if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = userkey; // Use userkey as club_id
 
-    // Get current rotary year
-    const [rotaryYears] = await pool.query(
-      rotary_year 
-        ? 'SELECT id, year_label FROM rotary_years WHERE year_label = ?' 
-        : 'SELECT id, year_label FROM rotary_years WHERE is_current = TRUE',
-      rotary_year ? [rotary_year] : []
-    );
-    if (rotaryYears.length === 0) {
-      return errorResponse(res, 'Rotary year not found', 404);
-    }
-    const rotaryYearId = rotaryYears[0].id;
-    const rotaryYearLabel = rotaryYears[0].year_label;
+    const targetYear = rotary_year || getCurrentRotaryYear();
 
-    // Get dues config for this club and year
-    const [duesConfig] = await pool.query(`
-      SELECT amount, due_date FROM district_dues_config 
-      WHERE club_id = ? AND rotary_year_id = ?
-    `, [clubId, rotaryYearId]);
-    const defaultAmount = duesConfig.length > 0 ? duesConfig[0].amount : 1000;
-    const defaultDueDate = duesConfig.length > 0 ? duesConfig[0].due_date : null;
+    // Get config for this year
+    const [config] = await pool.query(`
+      SELECT amount, transaction_fee_percent, due_date
+      FROM district_dues_config 
+      WHERE rotary_year = ?
+    `, [targetYear]);
 
-    // Get all club members from manchesterclub database
-    const allMembers = await getMembersByUserkey(userkey);
+    const amountPerMember = config.length > 0 ? parseFloat(config[0].amount) : 1000;
+    const transactionFeePercent = config.length > 0 ? parseFloat(config[0].transaction_fee_percent) : 2.5;
+    const dueDate = config.length > 0 ? config[0].due_date : null;
 
-    // Get existing payments for this club and rotary year
-    const [payments] = await pool.query(`
-      SELECT 
-        ddp.id,
-        ddp.member_id,
-        ddp.amount,
-        ddp.due_date,
-        ddp.status,
-        ddp.paid_on,
-        ddp.payment_mode,
-        ddp.reference_id,
-        ddp.notes,
-        ddp.reminder_sent_at
-      FROM district_dues_payments ddp
-      WHERE ddp.club_id = ? AND ddp.rotary_year_id = ?
-    `, [clubId, rotaryYearId]);
+    // Get member count from manchesterclub
+    const members = await getMembersByUserkey(userkey);
+    const memberCount = members.length;
 
-    // Create a map of payments by member_id
-    const paymentMap = new Map();
-    for (const payment of payments) {
-      paymentMap.set(String(payment.member_id), payment);
-    }
+    // Calculate totals
+    const totalAmount = memberCount * amountPerMember;
+    const transactionFee = (totalAmount * transactionFeePercent) / 100;
+    const grandTotal = totalAmount + transactionFee;
 
-    // Build members list with payment status (all members enrolled by default)
-    const today = new Date();
-    let members = allMembers.map(member => {
-      const memberId = String(member.id);
-      const payment = paymentMap.get(memberId);
-      
-      let paymentStatus = 'pending';
-      if (payment) {
-        paymentStatus = payment.status;
-        // Check if overdue
-        if (paymentStatus === 'pending' && payment.due_date && new Date(payment.due_date) < today) {
-          paymentStatus = 'overdue';
-        }
-      } else if (defaultDueDate && new Date(defaultDueDate) < today) {
-        paymentStatus = 'overdue';
-      }
+    // Check if club has already paid for this year
+    const [payment] = await pool.query(`
+      SELECT id, status, paid_on, payment_mode, reference_id, notes
+      FROM district_dues_club_payments 
+      WHERE club_id = ? AND rotary_year = ?
+    `, [userkey, targetYear]);
 
-      return {
-        id: payment ? payment.id : null,
-        member_id: member.id,
-        member_name: member.name,
-        member_email: member.email,
-        member_phone: member.phone,
-        amount: payment ? payment.amount : defaultAmount,
-        due_date: payment ? payment.due_date : defaultDueDate,
-        status: paymentStatus,
-        paid_on: payment ? payment.paid_on : null,
-        payment_mode: payment ? payment.payment_mode : null,
-        reference_id: payment ? payment.reference_id : null,
-        notes: payment ? payment.notes : null,
-        reminder_sent_at: payment ? payment.reminder_sent_at : null,
-        rotary_year: rotaryYearLabel
-      };
-    });
-
-    // Apply search filter
-    if (search) {
-      const searchLower = search.toLowerCase();
-      members = members.filter(m => 
-        (m.member_name && m.member_name.toLowerCase().includes(searchLower)) ||
-        (m.member_email && m.member_email.toLowerCase().includes(searchLower)) ||
-        (m.member_phone && m.member_phone.includes(search))
-      );
-    }
-
-    // Apply status filter
-    if (status && status !== 'all') {
-      members = members.filter(m => m.status === status);
-    }
-
-    // Calculate summary
-    const totalMembers = allMembers.length;
-    const paidMembers = members.filter(m => m.status === 'paid');
-    const pendingMembers = members.filter(m => m.status === 'pending');
-    const overdueMembers = members.filter(m => m.status === 'overdue');
-    
-    const collected = paidMembers.reduce((sum, m) => sum + parseFloat(m.amount || 0), 0);
-    const pending = pendingMembers.reduce((sum, m) => sum + parseFloat(m.amount || 0), 0) + 
-                    overdueMembers.reduce((sum, m) => sum + parseFloat(m.amount || 0), 0);
+    const paymentStatus = payment.length > 0 ? payment[0].status : 'pending';
+    const paidOn = payment.length > 0 ? payment[0].paid_on : null;
+    const referenceId = payment.length > 0 ? payment[0].reference_id : null;
+    const paymentMode = payment.length > 0 ? payment[0].payment_mode : null;
 
     return apiResponse(res, true, {
-      config: {
-        amount: defaultAmount,
-        due_date: defaultDueDate
-      },
-      summary: {
-        total_club_members: totalMembers,
-        paid_count: paidMembers.length,
-        pending_count: pendingMembers.length,
-        overdue_count: overdueMembers.length,
-        collected: collected,
-        pending: pending
-      },
-      members
-    }, 'District dues fetched successfully');
+      club_id: userkey,
+      club_name: club.clubname,
+      rotary_year: targetYear,
+      member_count: memberCount,
+      amount_per_member: amountPerMember,
+      total_amount: totalAmount,
+      transaction_fee_percent: transactionFeePercent,
+      transaction_fee: transactionFee,
+      grand_total: grandTotal,
+      due_date: dueDate,
+      status: paymentStatus,
+      paid_on: paidOn,
+      payment_mode: paymentMode,
+      reference_id: referenceId
+    }, 'Club summary fetched successfully');
 
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch district dues', 500, error);
+    return errorResponse(res, 'Failed to fetch club summary', 500, error);
   }
 };
 
-// Mark district dues as paid
-const markAsPaid = async (req, res) => {
+// ============================================================================
+// API 4: PAY - Record club payment for district dues
+// ============================================================================
+const payDues = async (req, res) => {
   try {
-    const { userkey, member_id, paid_on, payment_mode, reference_id, notes, amount } = req.body;
+    const { userkey, rotary_year, payment_mode, reference_id, notes } = req.body;
 
-    const validation = validateRequired(req.body, ['userkey', 'member_id', 'paid_on']);
+    const validation = validateRequired(req.body, ['userkey', 'payment_mode', 'reference_id']);
     if (!validation.valid) {
       return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
     }
 
-    // Verify club exists in manchesterclub database
+    // Verify club exists
     const club = await getClubByUserkey(userkey);
     if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = userkey; // Use userkey as club_id
 
-    // Get current rotary year
-    const [rotaryYears] = await pool.query('SELECT id FROM rotary_years WHERE is_current = TRUE');
-    if (rotaryYears.length === 0) {
-      return errorResponse(res, 'No current rotary year found', 404);
-    }
-    const rotaryYearId = rotaryYears[0].id;
+    const targetYear = rotary_year || getCurrentRotaryYear();
 
-    // Check if payment record exists
+    // Check if already paid
     const [existingPayment] = await pool.query(`
-      SELECT id FROM district_dues_payments 
-      WHERE club_id = ? AND member_id = ? AND rotary_year_id = ?
-    `, [clubId, member_id, rotaryYearId]);
+      SELECT id, status FROM district_dues_club_payments 
+      WHERE club_id = ? AND rotary_year = ?
+    `, [userkey, targetYear]);
+
+    if (existingPayment.length > 0 && existingPayment[0].status === 'paid') {
+      return errorResponse(res, 'Dues already paid for this year', 400);
+    }
+
+    // Get config
+    const [config] = await pool.query(`
+      SELECT amount, transaction_fee_percent
+      FROM district_dues_config 
+      WHERE rotary_year = ?
+    `, [targetYear]);
+
+    const amountPerMember = config.length > 0 ? parseFloat(config[0].amount) : 1000;
+    const transactionFeePercent = config.length > 0 ? parseFloat(config[0].transaction_fee_percent) : 2.5;
+
+    // Get member count
+    const members = await getMembersByUserkey(userkey);
+    const memberCount = members.length;
+
+    // Calculate totals
+    const totalAmount = memberCount * amountPerMember;
+    const transactionFee = (totalAmount * transactionFeePercent) / 100;
+    const grandTotal = totalAmount + transactionFee;
+
+    const paidOn = formatDateForDB(new Date());
 
     if (existingPayment.length > 0) {
-      // Update existing payment record
+      // Update existing record
       await pool.query(`
-        UPDATE district_dues_payments 
-        SET status = 'paid', 
-            paid_on = ?, 
-            payment_mode = ?, 
-            reference_id = ?, 
-            notes = ?,
+        UPDATE district_dues_club_payments 
+        SET member_count = ?, amount_per_member = ?, total_amount = ?,
+            transaction_fee_percent = ?, transaction_fee = ?, grand_total = ?,
+            status = 'paid', paid_on = ?, payment_mode = ?, reference_id = ?, notes = ?,
             updated_at = CURRENT_TIMESTAMP
-        WHERE club_id = ? AND member_id = ? AND rotary_year_id = ?
-      `, [formatDateForDB(paid_on), payment_mode, reference_id, notes, clubId, member_id, rotaryYearId]);
+        WHERE club_id = ? AND rotary_year = ?
+      `, [memberCount, amountPerMember, totalAmount, transactionFeePercent, transactionFee, grandTotal,
+          paidOn, payment_mode, reference_id, notes, userkey, targetYear]);
     } else {
-      // Create new payment record (member is enrolled by default)
-      // Get dues config for amount, or use provided amount, or default
-      const [duesConfig] = await pool.query(`
-        SELECT amount, due_date FROM district_dues_config 
-        WHERE club_id = ? AND rotary_year_id = ?
-      `, [clubId, rotaryYearId]);
-      
-      const duesAmount = amount || (duesConfig.length > 0 ? duesConfig[0].amount : 1000);
-      const dueDate = duesConfig.length > 0 ? duesConfig[0].due_date : new Date();
-
+      // Create new payment record
       await pool.query(`
-        INSERT INTO district_dues_payments 
-        (id, club_id, member_id, rotary_year_id, amount, due_date, status, paid_on, payment_mode, reference_id, notes)
-        VALUES (?, ?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
-      `, [generateId(), clubId, member_id, rotaryYearId, duesAmount, dueDate, formatDateForDB(paid_on), payment_mode, reference_id, notes]);
+        INSERT INTO district_dues_club_payments 
+        (id, club_id, rotary_year, member_count, amount_per_member, total_amount,
+         transaction_fee_percent, transaction_fee, grand_total, status, paid_on, payment_mode, reference_id, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?)
+      `, [generateId(), userkey, targetYear, memberCount, amountPerMember, totalAmount,
+          transactionFeePercent, transactionFee, grandTotal, paidOn, payment_mode, reference_id, notes]);
     }
 
-    return apiResponse(res, true, null, 'Payment marked as paid successfully');
+    return apiResponse(res, true, {
+      club_id: userkey,
+      rotary_year: targetYear,
+      member_count: memberCount,
+      total_amount: totalAmount,
+      transaction_fee: transactionFee,
+      grand_total: grandTotal,
+      status: 'paid',
+      paid_on: paidOn,
+      reference_id: reference_id
+    }, 'Payment recorded successfully');
 
   } catch (error) {
-    return errorResponse(res, 'Failed to mark payment as paid', 500, error);
+    return errorResponse(res, 'Failed to record payment', 500, error);
   }
 };
 
-// Send payment reminder
-const sendReminder = async (req, res) => {
+// ============================================================================
+// API 5: PAYMENT HISTORY - Returns past years' payments for a club
+// ============================================================================
+const getPaymentHistory = async (req, res) => {
   try {
-    const { userkey, member_ids, reminder_type = 'email' } = req.body;
+    const { userkey } = req.body;
 
-    const validation = validateRequired(req.body, ['userkey']);
-    if (!validation.valid) {
-      return errorResponse(res, `Missing required fields: ${validation.missing.join(', ')}`, 400);
+    if (!userkey) {
+      return errorResponse(res, 'userkey is required', 400);
     }
 
-    // Verify club exists in manchesterclub database
+    // Verify club exists
     const club = await getClubByUserkey(userkey);
     if (!club) {
       return errorResponse(res, 'Club not found', 404);
     }
-    const clubId = userkey; // Use userkey as club_id
 
-    // Get current rotary year
-    const [rotaryYears] = await pool.query('SELECT id FROM rotary_years WHERE is_current = TRUE');
-    if (rotaryYears.length === 0) {
-      return errorResponse(res, 'No current rotary year found', 404);
-    }
-
-    // Get pending/overdue members
-    let query = `
-      SELECT ddp.id, ddp.member_id, m.name, m.email, m.phone, ddp.amount, ddp.due_date
-      FROM district_dues_payments ddp
-      JOIN members m ON ddp.member_id = m.id
-      WHERE ddp.club_id = ? AND ddp.rotary_year_id = ? AND ddp.status IN ('pending', 'overdue')
-    `;
-    const params = [clubId, rotaryYears[0].id];
-
-    if (member_ids && member_ids.length > 0) {
-      query += ` AND ddp.member_id IN (?)`;
-      params.push(member_ids);
-    }
-
-    const [members] = await pool.query(query, params);
-
-    if (members.length === 0) {
-      return apiResponse(res, true, { sent_count: 0 }, 'No pending payments to remind');
-    }
-
-    // Log reminders (actual sending would integrate with notification service)
-    const reminderLogs = members.map(member => [
-      generateId(),
-      clubId,
-      'district_dues',
-      member.id,
-      member.member_id,
-      reminder_type,
-      'sent'
-    ]);
-
-    await pool.query(`
-      INSERT INTO reminder_logs (id, club_id, reminder_type, reference_id, member_id, sent_via, status)
-      VALUES ?
-    `, [reminderLogs]);
-
-    // Update reminder_sent_at
-    const memberIdList = members.map(m => m.member_id);
-    await pool.query(`
-      UPDATE district_dues_payments 
-      SET reminder_sent_at = CURRENT_TIMESTAMP 
-      WHERE club_id = ? AND member_id IN (?) AND rotary_year_id = ?
-    `, [clubId, memberIdList, rotaryYears[0].id]);
+    const [payments] = await pool.query(`
+      SELECT 
+        rotary_year,
+        member_count,
+        amount_per_member,
+        total_amount,
+        transaction_fee_percent,
+        transaction_fee,
+        grand_total,
+        status,
+        paid_on,
+        payment_mode,
+        reference_id,
+        notes,
+        created_at
+      FROM district_dues_club_payments 
+      WHERE club_id = ?
+      ORDER BY rotary_year DESC
+    `, [userkey]);
 
     return apiResponse(res, true, {
-      sent_count: members.length,
-      members: members.map(m => ({ id: m.member_id, name: m.name, email: m.email }))
-    }, `Reminders sent to ${members.length} members`);
+      club_id: userkey,
+      club_name: club.clubname,
+      payments: payments.map(p => ({
+        rotary_year: p.rotary_year,
+        member_count: p.member_count,
+        amount_per_member: parseFloat(p.amount_per_member),
+        total_amount: parseFloat(p.total_amount),
+        transaction_fee_percent: parseFloat(p.transaction_fee_percent),
+        transaction_fee: parseFloat(p.transaction_fee),
+        grand_total: parseFloat(p.grand_total),
+        status: p.status,
+        paid_on: p.paid_on,
+        payment_mode: p.payment_mode,
+        reference_id: p.reference_id,
+        notes: p.notes
+      }))
+    }, 'Payment history fetched successfully');
 
   } catch (error) {
-    return errorResponse(res, 'Failed to send reminders', 500, error);
+    return errorResponse(res, 'Failed to fetch payment history', 500, error);
+  }
+};
+
+// ============================================================================
+// API 6: ADMIN CLUBS VIEW - Lists all clubs with their dues status
+// ============================================================================
+const getAdminClubsView = async (req, res) => {
+  try {
+    const { rotary_year, status } = req.body;
+    const targetYear = rotary_year || getCurrentRotaryYear();
+
+    // Get config for this year
+    const [config] = await pool.query(`
+      SELECT amount, transaction_fee_percent
+      FROM district_dues_config 
+      WHERE rotary_year = ?
+    `, [targetYear]);
+
+    const amountPerMember = config.length > 0 ? parseFloat(config[0].amount) : 1000;
+    const transactionFeePercent = config.length > 0 ? parseFloat(config[0].transaction_fee_percent) : 2.5;
+
+    // Get all clubs from manchesterclub
+    const [clubs] = await manchesterPool.query(`
+      SELECT clubno, clubname 
+      FROM clubdetails 
+      ORDER BY clubname
+    `);
+
+    // Get all payments for this year
+    const [payments] = await pool.query(`
+      SELECT club_id, member_count, total_amount, transaction_fee, grand_total, status, paid_on, reference_id
+      FROM district_dues_club_payments 
+      WHERE rotary_year = ?
+    `, [targetYear]);
+
+    const paymentMap = new Map();
+    for (const p of payments) {
+      paymentMap.set(String(p.club_id), p);
+    }
+
+    // Build clubs list with dues info
+    const clubsList = [];
+    let totalCollected = 0;
+    let totalPending = 0;
+    let paidCount = 0;
+    let pendingCount = 0;
+
+    for (const club of clubs) {
+      const clubId = String(club.clubno);
+      const payment = paymentMap.get(clubId);
+
+      // Get member count for this club
+      const members = await getMembersByUserkey(clubId);
+      const memberCount = members.length;
+
+      const totalAmount = memberCount * amountPerMember;
+      const transactionFee = (totalAmount * transactionFeePercent) / 100;
+      const grandTotal = totalAmount + transactionFee;
+
+      const clubStatus = payment ? payment.status : 'pending';
+
+      if (clubStatus === 'paid') {
+        totalCollected += parseFloat(payment.grand_total);
+        paidCount++;
+      } else {
+        totalPending += grandTotal;
+        pendingCount++;
+      }
+
+      // Apply status filter
+      if (status && status !== 'all' && clubStatus !== status) {
+        continue;
+      }
+
+      clubsList.push({
+        club_id: clubId,
+        club_name: club.clubname,
+        member_count: memberCount,
+        amount_per_member: amountPerMember,
+        total_amount: totalAmount,
+        transaction_fee: transactionFee,
+        grand_total: grandTotal,
+        status: clubStatus,
+        paid_on: payment ? payment.paid_on : null,
+        reference_id: payment ? payment.reference_id : null
+      });
+    }
+
+    return apiResponse(res, true, {
+      rotary_year: targetYear,
+      config: {
+        amount_per_member: amountPerMember,
+        transaction_fee_percent: transactionFeePercent
+      },
+      summary: {
+        total_clubs: clubs.length,
+        paid_count: paidCount,
+        pending_count: pendingCount,
+        total_collected: totalCollected,
+        total_pending: totalPending
+      },
+      clubs: clubsList
+    }, 'Admin clubs view fetched successfully');
+
+  } catch (error) {
+    return errorResponse(res, 'Failed to fetch admin clubs view', 500, error);
   }
 };
 
 module.exports = {
-  getDistrictDues,
-  markAsPaid,
-  sendReminder
+  getConfig,
+  updateConfig,
+  getClubSummary,
+  payDues,
+  getPaymentHistory,
+  getAdminClubsView
 };
